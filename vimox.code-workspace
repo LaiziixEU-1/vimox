@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "name": "VimoX",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "workbench.colorTheme": "Dark Modern",
+    "editor.formatOnSave": true
+  }
+}
+

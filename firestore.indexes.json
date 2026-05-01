@@ -1,0 +1,22 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "waitingUsers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isSearching", "order": "ASCENDING" },
+        { "fieldPath": "age", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sentAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
+
