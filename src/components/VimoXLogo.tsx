@@ -1,5 +1,12 @@
 import { StyleSheet, Text, View } from "react-native";
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  LinearGradient,
+  Path,
+  Stop,
+} from "react-native-svg";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -8,7 +15,11 @@ type Props = {
   compact?: boolean;
 };
 
-export function VimoXLogo({ size = 210, showWordmark = true, compact = false }: Props) {
+export function VimoXLogo({
+  size = 210,
+  showWordmark = true,
+  compact = false,
+}: Props) {
   const markSize = compact ? size : Math.round(size * 0.72);
 
   return (
@@ -17,24 +28,38 @@ export function VimoXLogo({ size = 210, showWordmark = true, compact = false }: 
         <Svg width={markSize} height={markSize} viewBox="0 0 240 240">
           <Defs>
             <LinearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor={colors.neonRed} />
-              <Stop offset="0.48" stopColor={colors.neonRed} />
-              <Stop offset="0.52" stopColor={colors.neonBlue} />
-              <Stop offset="1" stopColor={colors.neonBlue} />
+              <Stop offset={0} stopColor={colors.neonRed} />
+              <Stop offset={0.48} stopColor={colors.neonRed} />
+              <Stop offset={0.52} stopColor={colors.neonBlue} />
+              <Stop offset={1} stopColor={colors.neonBlue} />
             </LinearGradient>
             <LinearGradient id="vLeft" x1="0" y1="0" x2="1" y2="1">
-              <Stop offset="0" stopColor="#FF6B6B" />
-              <Stop offset="1" stopColor={colors.neonRed} />
+              <Stop offset={0} stopColor="#FF6B6B" />
+              <Stop offset={1} stopColor={colors.neonRed} />
             </LinearGradient>
             <LinearGradient id="vRight" x1="0" y1="1" x2="1" y2="0">
-              <Stop offset="0" stopColor={colors.neonBlue} />
-              <Stop offset="1" stopColor="#7CE7FF" />
+              <Stop offset={0} stopColor={colors.neonBlue} />
+              <Stop offset={1} stopColor="#7CE7FF" />
             </LinearGradient>
           </Defs>
 
           <G opacity={0.22}>
-            <Circle cx="118" cy="102" r="79" stroke={colors.neonRed} strokeWidth="14" fill="none" />
-            <Circle cx="122" cy="102" r="79" stroke={colors.neonBlue} strokeWidth="14" fill="none" />
+            <Circle
+              cx="118"
+              cy="102"
+              r="79"
+              stroke={colors.neonRed}
+              strokeWidth="14"
+              fill="none"
+            />
+            <Circle
+              cx="122"
+              cy="102"
+              r="79"
+              stroke={colors.neonBlue}
+              strokeWidth="14"
+              fill="none"
+            />
           </G>
 
           <Path
@@ -59,17 +84,29 @@ export function VimoXLogo({ size = 210, showWordmark = true, compact = false }: 
             strokeWidth="3"
             strokeLinejoin="round"
           />
-          <Path d="M116 129 L128 151 L120 172 L107 151 Z" fill="#05050A" stroke={colors.neonBlue} strokeWidth="2" />
+          <Path
+            d="M116 129 L128 151 L120 172 L107 151 Z"
+            fill="#05050A"
+            stroke={colors.neonBlue}
+            strokeWidth="2"
+          />
         </Svg>
       </View>
 
       {showWordmark && (
         <>
-          <Text style={[styles.word, { fontSize: Math.max(34, Math.round(size * 0.24)) }]}>
+          <Text
+            style={[
+              styles.word,
+              { fontSize: Math.max(34, Math.round(size * 0.24)) },
+            ]}
+          >
             <Text style={styles.wordBlue}>Vimo</Text>
             <Text style={styles.wordRed}>X</Text>
           </Text>
-          {!compact && <Text style={styles.tagline}>TALK. CONNECT. ANYWHERE.</Text>}
+          {!compact && (
+            <Text style={styles.tagline}>TALK. CONNECT. ANYWHERE.</Text>
+          )}
         </>
       )}
     </View>
@@ -79,29 +116,29 @@ export function VimoXLogo({ size = 210, showWordmark = true, compact = false }: 
 const styles = StyleSheet.create({
   wrap: {
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
   glow: {
     alignItems: "center",
     justifyContent: "center",
     shadowColor: colors.neonBlue,
     shadowOpacity: 0.95,
-    shadowRadius: 24
+    shadowRadius: 24,
   },
   word: {
     marginTop: -8,
     fontWeight: "900",
     letterSpacing: 1,
     textShadowColor: colors.neonBlue,
-    textShadowRadius: 13
+    textShadowRadius: 13,
   },
   wordBlue: {
-    color: "#CDEEFF"
+    color: "#CDEEFF",
   },
   wordRed: {
     color: colors.neonRed,
     textShadowColor: colors.neonRed,
-    textShadowRadius: 16
+    textShadowRadius: 16,
   },
   tagline: {
     color: colors.neonBlue,
@@ -110,7 +147,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 4,
     textShadowColor: colors.neonBlue,
-    textShadowRadius: 8
-  }
+    textShadowRadius: 8,
+  },
 });
-

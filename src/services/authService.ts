@@ -17,9 +17,15 @@ type RegisterInput = {
 export async function registerUser(input: RegisterInput) {
   if (input.age < 16) throw new Error("L'âge minimum est 16 ans.");
 
-  const credential = await createUserWithEmailAndPassword(auth, input.email, input.password);
+  const credential = await createUserWithEmailAndPassword(
+    auth,
+    input.email,
+    input.password,
+  );
   const uid = credential.user.uid;
-  const profilePhotoURL = input.imageUri ? await uploadProfilePhoto(uid, input.imageUri) : undefined;
+  const profilePhotoURL = input.imageUri
+    ? await uploadProfilePhoto(uid, input.imageUri)
+    : undefined;
 
   const user: VimoXUser = {
     id: uid,
@@ -28,15 +34,15 @@ export async function registerUser(input: RegisterInput) {
     email: input.email,
     gender: input.gender,
     country: input.country,
-    profilePhotoURL,
+    profilePhotoURL: profilePhotoURL ?? null,
     isPremium: false,
-    blockedUserIds: []
+    blockedUserIds: [],
   };
 
   await setDoc(doc(db, "users", uid), {
     ...user,
     createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -47,4 +53,3 @@ async function uploadProfilePhoto(uid: string, uri: string) {
   await uploadBytes(imageRef, blob);
   return getDownloadURL(imageRef);
 }
-

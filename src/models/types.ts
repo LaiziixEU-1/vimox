@@ -30,9 +30,9 @@ export type ChatMessage = {
 };
 
 export type RootStackParamList = {
+  Login: undefined;
   Register: undefined;
   Matching: undefined;
   ChatRoom: { roomId: string };
   VideoCall: { roomId: string };
 };
-
