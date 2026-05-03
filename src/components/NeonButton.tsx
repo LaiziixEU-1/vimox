@@ -1,5 +1,4 @@
 import { Pressable, StyleSheet, Text, ViewStyle } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -8,44 +7,73 @@ type Props = {
   danger?: boolean;
   disabled?: boolean;
   style?: ViewStyle;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+  variant?: "filled" | "outline";
 };
 
-export function NeonButton({ title, onPress, danger, disabled, style }: Props) {
+export function NeonButton({
+  title,
+  onPress,
+  danger,
+  disabled,
+  style,
+  accessibilityLabel,
+  accessibilityHint,
+  variant = "filled",
+}: Props) {
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={[styles.wrap, disabled && styles.disabled, style]}>
-      <LinearGradient
-        colors={danger ? [colors.neonRed, "#9A1111"] : [colors.neonBlue, colors.neonRed]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.button}
-      >
-        <Text style={styles.text}>{title}</Text>
-      </LinearGradient>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.button,
+        variant === "outline" && styles.outline,
+        disabled && styles.disabled,
+        pressed && styles.pressed,
+        style,
+      ]}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: !!disabled }}
+    >
+      <Text style={[styles.text, variant === "outline" && styles.outlineText]}>
+        {title}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    shadowColor: colors.neonBlue,
-    shadowOpacity: 0.7,
-    shadowRadius: 16,
-    elevation: 8
-  },
   button: {
     minHeight: 52,
-    borderRadius: 16,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 18
+    paddingHorizontal: 18,
+    backgroundColor: colors.neonRed,
+  },
+  outline: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: colors.neonRed,
   },
   text: {
     color: colors.text,
-    fontSize: 16,
-    fontWeight: "800"
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  outlineText: {
+    color: colors.neonRed,
   },
   disabled: {
-    opacity: 0.55
-  }
+    opacity: 0.45,
+  },
+  pressed: {
+    opacity: 0.8,
+  },
 });
-

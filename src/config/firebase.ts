@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
@@ -10,14 +10,14 @@ const firebaseConfig = {
   projectId: env.firebaseProjectId,
   storageBucket: env.firebaseStorageBucket,
   messagingSenderId: env.firebaseMessagingSenderId,
-  appId: env.firebaseAppId
+  appId: env.firebaseAppId,
 };
 
 if (!isFirebaseConfigured()) {
-  throw new Error("Configuration Firebase manquante. Copie .env.example vers .env et remplis les valeurs Firebase.");
+  throw new Error("Configuration Firebase manquante.");
 }
 
-const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);

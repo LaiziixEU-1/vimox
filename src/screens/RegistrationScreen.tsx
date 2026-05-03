@@ -1,17 +1,37 @@
 import { useState } from "react";
 import { ComponentProps } from "react";
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import * as ImagePicker from "expo-image-picker";
-import { LinearGradient } from "expo-linear-gradient";
-import { GlassPanel } from "../components/GlassPanel";
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { NeonButton } from "../components/NeonButton";
 import { VimoXLogo } from "../components/VimoXLogo";
 import { Gender } from "../models/types";
 import { registerUser } from "../services/authService";
 import { colors } from "../theme/colors";
 
-const genders: Exclude<Gender, "Tous">[] = ["Femme", "Homme", "Non-binaire", "Autre"];
-const countries = ["France", "Suisse", "Belgique", "Canada", "Maroc", "Algérie", "Tunisie"];
+const genders: Exclude<Gender, "Tous">[] = [
+  "Femme",
+  "Homme",
+  "Non-binaire",
+  "Autre",
+];
+const countries = [
+  "France",
+  "Suisse",
+  "Belgique",
+  "Canada",
+  "Maroc",
+  "Algérie",
+  "Tunisie",
+];
 
 export function RegistrationScreen() {
   const [name, setName] = useState("");
@@ -20,21 +40,7 @@ export function RegistrationScreen() {
   const [password, setPassword] = useState("");
   const [gender, setGender] = useState<Exclude<Gender, "Tous">>("Autre");
   const [country, setCountry] = useState("France");
-  const [imageUri, setImageUri] = useState<string>();
   const [loading, setLoading] = useState(false);
-
-  async function pickImage(camera = false) {
-    const permission = camera
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert("Permission requise", "Autorise l'accès pour ajouter ta photo.");
-
-    const result = camera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.8, allowsEditing: true, aspect: [1, 1] })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, allowsEditing: true, aspect: [1, 1] });
-
-    if (!result.canceled) setImageUri(result.assets[0].uri);
-  }
 
   async function submit() {
     try {
@@ -46,76 +52,193 @@ export function RegistrationScreen() {
         password,
         gender,
         country,
-        imageUri
       });
     } catch (error) {
-      Alert.alert("Inscription impossible", error instanceof Error ? error.message : "Erreur inconnue");
+      Alert.alert(
+        "Inscription impossible",
+        error instanceof Error ? error.message : "Erreur inconnue",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <LinearGradient colors={[colors.black, "#111122", "#16080D"]} style={styles.root}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+    <View style={styles.root}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+      >
         <ScrollView contentContainerStyle={styles.content}>
-          <VimoXLogo size={260} />
+          <View style={styles.logoContainer}>
+            <VimoXLogo size={120} showWordmark={false} />
+            <Text style={styles.brand}>
+              VIMO<Text style={styles.brandX}>X</Text>
+            </Text>
+            <Text style={styles.subtitle}>Créer un compte</Text>
+            <Text style={styles.subtitleSub}>Rejoins la communauté VimoX</Text>
+          </View>
 
-          <GlassPanel style={{ gap: 14 }}>
-            <Pressable onPress={() => pickImage(false)} style={styles.avatar}>
-              {imageUri ? <Image source={{ uri: imageUri }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>+</Text>}
-            </Pressable>
+          <View style={styles.form}>
+            <Input
+              placeholder="Nom complet"
+              value={name}
+              onChangeText={setName}
+              icon="👤"
+            />
+            <Input
+              placeholder="Âge"
+              value={age}
+              onChangeText={setAge}
+              keyboardType="number-pad"
+              icon="🎂"
+            />
+            <Input
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              icon="✉"
+            />
+            <Input
+              placeholder="Mot de passe"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              icon="🔒"
+            />
 
-            <View style={styles.row}>
-              <Pressable onPress={() => pickImage(false)}><Text style={styles.link}>Galerie</Text></Pressable>
-              <Pressable onPress={() => pickImage(true)}><Text style={styles.link}>Caméra</Text></Pressable>
+            <Text style={styles.label}>Genre</Text>
+            <View style={styles.choices}>
+              {genders.map((g) => (
+                <Pressable
+                  key={g}
+                  onPress={() => setGender(g)}
+                  style={[styles.choice, gender === g && styles.choiceActive]}
+                >
+                  <Text
+                    style={[
+                      styles.choiceText,
+                      gender === g && styles.choiceTextActive,
+                    ]}
+                  >
+                    {g}
+                  </Text>
+                </Pressable>
+              ))}
             </View>
 
-            <Input placeholder="Nom" value={name} onChangeText={setName} />
-            <Input placeholder="Âge minimum 16" value={age} onChangeText={setAge} keyboardType="number-pad" />
-            <Input placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-            <Input placeholder="Mot de passe" value={password} onChangeText={setPassword} secureTextEntry />
+            <Text style={styles.label}>Pays</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.choicesRow}>
+                {countries.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => setCountry(c)}
+                    style={[
+                      styles.choice,
+                      country === c && styles.choiceActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        country === c && styles.choiceTextActive,
+                      ]}
+                    >
+                      {c}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
 
-            <ChoiceRow values={genders} value={gender} onChange={setGender} />
-            <ChoiceRow values={countries} value={country} onChange={setCountry} />
-          </GlassPanel>
+          <NeonButton
+            title={loading ? "Création..." : "S'inscrire"}
+            onPress={submit}
+            disabled={loading}
+          />
 
-          <NeonButton title={loading ? "Création..." : "Entrer dans VimoX"} disabled={loading} onPress={submit} />
+          <Text style={styles.note}>
+            Tu pourras ajouter ta photo depuis ton profil.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
-function Input(props: ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor={colors.muted} style={styles.input} {...props} />;
-}
-
-function ChoiceRow<T extends string>({ values, value, onChange }: { values: T[]; value: T; onChange: (value: T) => void }) {
+function Input({
+  icon,
+  ...props
+}: ComponentProps<typeof TextInput> & { icon?: string }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={styles.choices}>
-        {values.map((item) => (
-          <Pressable key={item} onPress={() => onChange(item)} style={[styles.choice, value === item && styles.choiceActive]}>
-            <Text style={styles.choiceText}>{item}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
+    <View style={styles.inputWrapper}>
+      {icon && <Text style={styles.inputIcon}>{icon}</Text>}
+      <TextInput
+        placeholderTextColor={colors.muted}
+        style={styles.input}
+        {...props}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { padding: 22, paddingTop: 70, gap: 20 },
-  avatar: { width: 116, height: 116, borderRadius: 58, alignSelf: "center", borderWidth: 2, borderColor: colors.neonBlue, alignItems: "center", justifyContent: "center", backgroundColor: colors.panelStrong },
-  avatarImage: { width: "100%", height: "100%", borderRadius: 58 },
-  avatarText: { color: colors.neonBlue, fontSize: 48, fontWeight: "300" },
-  row: { flexDirection: "row", gap: 24, justifyContent: "center" },
-  link: { color: colors.neonBlue, fontWeight: "800" },
-  input: { minHeight: 52, borderRadius: 14, backgroundColor: colors.panelStrong, color: colors.text, paddingHorizontal: 14, fontSize: 16 },
-  choices: { flexDirection: "row", gap: 8 },
-  choice: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 999, backgroundColor: colors.panelStrong },
-  choiceActive: { backgroundColor: colors.neonRed },
-  choiceText: { color: colors.text, fontWeight: "700" }
+  root: { flex: 1, backgroundColor: colors.black },
+  content: { padding: 24, paddingTop: 60, gap: 20 },
+  logoContainer: { alignItems: "center", gap: 6 },
+  brand: {
+    color: colors.text,
+    fontSize: 32,
+    fontWeight: "900",
+    letterSpacing: 4,
+  },
+  brandX: { color: colors.neonRed },
+  subtitle: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "800",
+    marginTop: 8,
+  },
+  subtitleSub: { color: colors.muted, fontSize: 14 },
+  form: { gap: 12 },
+  label: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    minHeight: 52,
+  },
+  inputIcon: { fontSize: 16, marginRight: 10, opacity: 0.5 },
+  input: { flex: 1, color: colors.text, fontSize: 15 },
+  choices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  choicesRow: { flexDirection: "row", gap: 8 },
+  choice: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  choiceActive: {
+    borderColor: colors.neonRed,
+    backgroundColor: "rgba(232,0,10,0.1)",
+  },
+  choiceText: { color: colors.muted, fontWeight: "600", fontSize: 13 },
+  choiceTextActive: { color: colors.neonRed },
+  note: { color: colors.muted, textAlign: "center", fontSize: 12 },
 });

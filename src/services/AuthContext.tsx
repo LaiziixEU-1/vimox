@@ -1,4 +1,11 @@
-import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  PropsWithChildren,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { User, onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../config/firebase";
@@ -32,7 +39,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
     return onSnapshot(doc(db, "users", firebaseUser.uid), (snapshot) => {
       if (!snapshot.exists()) return;
-      setProfile({ id: snapshot.id, ...(snapshot.data() as Omit<VimoXUser, "id">) });
+      setProfile({
+        id: snapshot.id,
+        ...(snapshot.data() as Omit<VimoXUser, "id">),
+      });
     });
   }, [firebaseUser]);
 
@@ -41,9 +51,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       firebaseUser,
       profile,
       loading,
-      logout: () => signOut(auth)
+      logout: () => signOut(auth),
     }),
-    [firebaseUser, profile, loading]
+    [firebaseUser, profile, loading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -54,4 +64,3 @@ export function useAuth() {
   if (!value) throw new Error("useAuth doit être utilisé dans AuthProvider");
   return value;
 }
-

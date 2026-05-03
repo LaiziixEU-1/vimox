@@ -1,30 +1,56 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { LinearGradient } from "expo-linear-gradient";
 import { doc, onSnapshot } from "firebase/firestore";
-import { GlassPanel } from "../components/GlassPanel";
 import { NeonButton } from "../components/NeonButton";
-import { AdBanner } from "../components/AdBanner";
 import { VimoXLogo } from "../components/VimoXLogo";
 import { RootStackParamList, Gender, MatchFilters } from "../models/types";
 import { db } from "../config/firebase";
 import { nextMatch, startMatching } from "../services/matchService";
 import { useAuth } from "../services/AuthContext";
-import { activatePremiumDemo, canUseUnlimitedSkip } from "../services/premiumService";
+import {
+  activatePremiumDemo,
+  canUseUnlimitedSkip,
+} from "../services/premiumService";
 import { colors } from "../theme/colors";
+import { notifyNewMatch } from "../services/notificationService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Matching">;
-const countries = ["Tous", "France", "Suisse", "Belgique", "Canada", "Maroc", "Algérie", "Tunisie"];
+const countries = [
+  "Tous",
+  "France",
+  "Suisse",
+  "Belgique",
+  "Canada",
+  "Maroc",
+  "Algérie",
+  "Tunisie",
+];
 const genders: Gender[] = ["Tous", "Femme", "Homme", "Non-binaire", "Autre"];
 
 export function MatchingScreen({ navigation }: Props) {
   const { profile, logout } = useAuth();
-  const [filters, setFilters] = useState<MatchFilters>({ minAge: 16, maxAge: 35, gender: "Tous", country: "Tous" });
-  const [status, setStatus] = useState("Prêt à matcher");
+  const [filters, setFilters] = useState<MatchFilters>({
+    minAge: 16,
+    maxAge: 35,
+    gender: "Tous",
+    country: "Tous",
+  });
+  const [status, setStatus] = useState("Tout est prêt !");
+  const [statusSub, setStatusSub] = useState(
+    "Nous allons te trouver des personnes incroyables 🔥",
+  );
   const [searching, setSearching] = useState(false);
   const [usedSkips, setUsedSkips] = useState(0);
-  const scan = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (!profile) return;
@@ -38,140 +64,347 @@ export function MatchingScreen({ navigation }: Props) {
   }, [navigation, profile]);
 
   useEffect(() => {
-    Animated.loop(
+    if (!searching) return;
+    const anim = Animated.loop(
       Animated.sequence([
-        Animated.timing(scan, { toValue: 1, duration: 1100, useNativeDriver: true }),
-        Animated.timing(scan, { toValue: 0, duration: 1100, useNativeDriver: true })
-      ])
-    ).start();
-  }, [scan]);
+        Animated.timing(pulse, {
+          toValue: 1.15,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [searching]);
 
   async function match() {
     if (!profile) return;
     setSearching(true);
-    setStatus("Recherche d'un signal compatible...");
+    setStatus("Recherche en cours...");
+    setStatusSub("Nous cherchons ton prochain match 🔥");
     try {
       const roomId = await startMatching(profile, filters);
-      if (roomId) navigation.navigate("ChatRoom", { roomId });
-      else setStatus("En attente d'un partenaire...");
+      if (roomId) {
+        await notifyNewMatch(undefined).catch(() => {});
+        navigation.navigate("ChatRoom", { roomId });
+      } else {
+        setStatus("En attente...");
+        setStatusSub("On cherche quelqu'un pour toi ⏳");
+      }
     } catch (error) {
       setSearching(false);
-      Alert.alert("Matching impossible", error instanceof Error ? error.message : "Erreur inconnue");
+      setStatus("Tout est prêt !");
+      setStatusSub("Nous allons te trouver des personnes incroyables 🔥");
+      Alert.alert(
+        "Matching impossible",
+        error instanceof Error ? error.message : "Erreur inconnue",
+      );
     }
   }
 
   async function next() {
     if (!profile) return;
     if (!canUseUnlimitedSkip(profile.isPremium, usedSkips)) {
-      Alert.alert("Premium requis", "Passe Premium pour obtenir les skips illimités.");
+      Alert.alert("Premium requis", "Passe Premium pour les skips illimités.");
       return;
     }
-    setUsedSkips((value) => value + 1);
+    setUsedSkips((v) => v + 1);
     const roomId = await nextMatch(profile, profile.activeMatchId, filters);
     if (roomId) navigation.navigate("ChatRoom", { roomId });
   }
 
-  async function upgrade() {
-    if (!profile) return;
-    await activatePremiumDemo(profile.id);
-    Alert.alert("Premium activé", "Mode démo activé. Pour l'App Store, branche StoreKit/RevenueCat ici.");
-  }
-
   return (
-    <LinearGradient colors={[colors.black, "#111122", "#16080D"]} style={styles.root}>
-      {searching && <Animated.View style={[styles.scan, { transform: [{ translateY: scan.interpolate({ inputRange: [0, 1], outputRange: [-260, 520] }) }] }]} />}
+    <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.content}>
+        {/* Header */}
         <View style={styles.header}>
-          <View>
-            <VimoXLogo size={150} compact />
-            <Text style={styles.signal}>{profile?.isPremium ? "PREMIUM SIGNAL" : "ANONYMOUS SIGNAL"}</Text>
-          </View>
-          <Pressable onPress={logout}><Text style={styles.logout}>Sortir</Text></Pressable>
+          <Pressable onPress={() => navigation.navigate("Profile" as never)}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>
+                {profile?.name?.[0]?.toUpperCase() ?? "?"}
+              </Text>
+            </View>
+          </Pressable>
+          <Text style={styles.appName}>
+            VIMO<Text style={styles.appX}>X</Text>
+          </Text>
+          <Pressable onPress={logout}>
+            <Text style={styles.logout}>Sortir</Text>
+          </Pressable>
         </View>
 
-        <GlassPanel style={styles.card}>
-          <VimoXLogo size={210} showWordmark={false} />
+        {/* Logo animé */}
+        <View style={styles.logoSection}>
+          <Animated.View style={{ transform: [{ scale: pulse }] }}>
+            <View style={styles.logoBg}>
+              <VimoXLogo size={160} showWordmark={false} />
+            </View>
+          </Animated.View>
+
+          {/* Filtres visuels autour du logo */}
+          <View style={styles.filtersAround}>
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>♂♀</Text>
+            </View>
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>
+                {filters.minAge}-{filters.maxAge}
+              </Text>
+            </View>
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>
+                {filters.country === "Tous"
+                  ? "🌍"
+                  : filters.country.slice(0, 2)}
+              </Text>
+            </View>
+          </View>
+
           <Text style={styles.status}>{status}</Text>
-          <Text style={styles.hint}>Appuie sur Match ou utilise Suivant pour changer instantanément de partenaire.</Text>
-        </GlassPanel>
+          <Text style={styles.statusSub}>{statusSub}</Text>
+        </View>
 
-        <GlassPanel style={{ gap: 14 }}>
-          <Text style={styles.title}>Filtres avant match</Text>
-          <Stepper label={`Âge min: ${filters.minAge}`} minus={() => setFilters((f) => ({ ...f, minAge: Math.max(16, f.minAge - 1) }))} plus={() => setFilters((f) => ({ ...f, minAge: Math.min(f.maxAge, f.minAge + 1) }))} />
-          <Stepper label={`Âge max: ${filters.maxAge}`} minus={() => setFilters((f) => ({ ...f, maxAge: Math.max(f.minAge, f.maxAge - 1) }))} plus={() => setFilters((f) => ({ ...f, maxAge: Math.min(99, f.maxAge + 1) }))} />
-          <ChoiceRow values={genders} value={filters.gender} onChange={(gender) => setFilters((f) => ({ ...f, gender }))} />
-          <ChoiceRow values={countries} value={filters.country} onChange={(country) => setFilters((f) => ({ ...f, country }))} />
-        </GlassPanel>
-
-        <GlassPanel>
-          <Text style={styles.title}>VimoX Premium</Text>
-          <Text style={styles.hint}>Sans pubs, skips illimités, effets vidéo premium, masques et avatars.</Text>
-          {!profile?.isPremium ? (
-            <>
-              <AdBanner />
-              <Pressable onPress={upgrade} style={styles.upgrade}>
-                <Text style={styles.upgradeText}>Activer Premium</Text>
+        {/* Filtres */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>FILTRES</Text>
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Âge min: {filters.minAge}</Text>
+            <View style={styles.stepperBtns}>
+              <Pressable
+                onPress={() =>
+                  setFilters((f) => ({
+                    ...f,
+                    minAge: Math.max(16, f.minAge - 1),
+                  }))
+                }
+                style={styles.stepBtn}
+              >
+                <Text style={styles.stepBtnText}>−</Text>
               </Pressable>
-            </>
-          ) : (
-            <Text style={styles.premiumOk}>Premium actif</Text>
-          )}
-        </GlassPanel>
+              <Pressable
+                onPress={() =>
+                  setFilters((f) => ({
+                    ...f,
+                    minAge: Math.min(f.maxAge, f.minAge + 1),
+                  }))
+                }
+                style={styles.stepBtn}
+              >
+                <Text style={styles.stepBtnText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Âge max: {filters.maxAge}</Text>
+            <View style={styles.stepperBtns}>
+              <Pressable
+                onPress={() =>
+                  setFilters((f) => ({
+                    ...f,
+                    maxAge: Math.max(f.minAge, f.maxAge - 1),
+                  }))
+                }
+                style={styles.stepBtn}
+              >
+                <Text style={styles.stepBtnText}>−</Text>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  setFilters((f) => ({
+                    ...f,
+                    maxAge: Math.min(99, f.maxAge + 1),
+                  }))
+                }
+                style={styles.stepBtn}
+              >
+                <Text style={styles.stepBtnText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.chips}>
+              {genders.map((g) => (
+                <Pressable
+                  key={g}
+                  onPress={() => setFilters((f) => ({ ...f, gender: g }))}
+                  style={[
+                    styles.chip,
+                    filters.gender === g && styles.chipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      filters.gender === g && styles.chipTextActive,
+                    ]}
+                  >
+                    {g}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.chips}>
+              {countries.map((c) => (
+                <Pressable
+                  key={c}
+                  onPress={() => setFilters((f) => ({ ...f, country: c }))}
+                  style={[
+                    styles.chip,
+                    filters.country === c && styles.chipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      filters.country === c && styles.chipTextActive,
+                    ]}
+                  >
+                    {c}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
 
-        <NeonButton title={searching ? "Recherche..." : "Match aléatoire"} onPress={match} disabled={searching} />
-        <NeonButton title="Suivant" danger onPress={next} />
+        {/* Boutons */}
+        <NeonButton
+          title={searching ? "Recherche..." : "✕  Lancer le match aléatoire"}
+          onPress={match}
+          disabled={searching}
+        />
+        {profile?.isPremium ? (
+          <NeonButton title="Suivant →" onPress={next} variant="outline" />
+        ) : (
+          <Pressable
+            onPress={() => navigation.navigate("Premium" as never)}
+            style={styles.premiumBanner}
+          >
+            <Text style={styles.premiumText}>
+              ⭐ Passe Premium pour les skips illimités
+            </Text>
+          </Pressable>
+        )}
       </ScrollView>
-    </LinearGradient>
-  );
-}
-
-function Stepper({ label, minus, plus }: { label: string; minus: () => void; plus: () => void }) {
-  return (
-    <View style={styles.stepper}>
-      <Text style={styles.stepperText}>{label}</Text>
-      <View style={styles.stepperControls}>
-        <Pressable onPress={minus} style={styles.round}><Text style={styles.roundText}>-</Text></Pressable>
-        <Pressable onPress={plus} style={styles.round}><Text style={styles.roundText}>+</Text></Pressable>
-      </View>
     </View>
   );
 }
 
-function ChoiceRow<T extends string>({ values, value, onChange }: { values: T[]; value: T; onChange: (value: T) => void }) {
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={styles.choices}>
-        {values.map((item) => (
-          <Pressable key={item} onPress={() => onChange(item)} style={[styles.choice, value === item && styles.choiceActive]}>
-            <Text style={styles.choiceText}>{item}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
-  );
-}
-
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { padding: 20, paddingTop: 58, gap: 18 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  signal: { color: colors.muted, fontSize: 12, fontWeight: "900" },
-  logout: { color: colors.neonRed, fontWeight: "900" },
-  card: { minHeight: 230, alignItems: "center", justifyContent: "center", gap: 16 },
-  status: { color: colors.text, fontSize: 22, fontWeight: "900", textAlign: "center" },
-  hint: { color: colors.muted, textAlign: "center", lineHeight: 20 },
-  title: { color: colors.text, fontSize: 18, fontWeight: "900" },
-  stepper: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  stepperText: { color: colors.text, fontWeight: "700" },
-  stepperControls: { flexDirection: "row", gap: 8 },
-  round: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.panelStrong, alignItems: "center", justifyContent: "center" },
-  roundText: { color: colors.text, fontSize: 20, fontWeight: "900" },
-  choices: { flexDirection: "row", gap: 8 },
-  choice: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 999, backgroundColor: colors.panelStrong },
-  choiceActive: { backgroundColor: colors.neonBlue },
-  choiceText: { color: colors.text, fontWeight: "800" },
-  upgrade: { marginTop: 12, minHeight: 44, borderRadius: 12, backgroundColor: colors.neonRed, alignItems: "center", justifyContent: "center" },
-  upgradeText: { color: colors.text, fontWeight: "900" },
-  premiumOk: { color: colors.success, marginTop: 10, fontWeight: "900" },
-  scan: { position: "absolute", left: 0, right: 0, height: 4, backgroundColor: colors.neonBlue, shadowColor: colors.neonBlue, shadowRadius: 18, shadowOpacity: 1 }
+  root: { flex: 1, backgroundColor: colors.black },
+  content: { padding: 20, paddingTop: 54, gap: 20 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.neonRed,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { color: colors.text, fontWeight: "900", fontSize: 16 },
+  appName: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    letterSpacing: 3,
+  },
+  appX: { color: colors.neonRed },
+  logout: { color: colors.neonRed, fontWeight: "700", fontSize: 14 },
+  logoSection: { alignItems: "center", gap: 14, paddingVertical: 10 },
+  logoBg: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: "rgba(232,0,10,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(232,0,10,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filtersAround: { flexDirection: "row", gap: 16 },
+  filterBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(232,0,10,0.4)",
+    backgroundColor: "rgba(232,0,10,0.08)",
+  },
+  filterBadgeText: { color: colors.text, fontWeight: "700", fontSize: 13 },
+  status: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  statusSub: { color: colors.muted, fontSize: 14, textAlign: "center" },
+  section: {
+    gap: 12,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sectionTitle: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 2,
+  },
+  filterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  filterLabel: { color: colors.text, fontWeight: "600", fontSize: 14 },
+  stepperBtns: { flexDirection: "row", gap: 8 },
+  stepBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: "rgba(232,0,10,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(232,0,10,0.3)",
+  },
+  stepBtnText: { color: colors.neonRed, fontSize: 18, fontWeight: "900" },
+  chips: { flexDirection: "row", gap: 8 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  chipActive: {
+    borderColor: colors.neonRed,
+    backgroundColor: "rgba(232,0,10,0.1)",
+  },
+  chipText: { color: colors.muted, fontWeight: "600", fontSize: 13 },
+  chipTextActive: { color: colors.neonRed },
+  premiumBanner: {
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(232,0,10,0.3)",
+    backgroundColor: "rgba(232,0,10,0.05)",
+  },
+  premiumText: { color: colors.neonRed, fontWeight: "700", fontSize: 13 },
 });

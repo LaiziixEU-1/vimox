@@ -1,7 +1,13 @@
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { auth, db, storage } from "../config/firebase";
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  deleteUser,
+} from "firebase/auth";
+import { doc, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore";
+import { auth, db } from "../config/firebase";
 import { Gender, VimoXUser } from "../models/types";
 
 type RegisterInput = {
@@ -11,7 +17,6 @@ type RegisterInput = {
   password: string;
   gender: Exclude<Gender, "Tous">;
   country: string;
-  imageUri?: string;
 };
 
 export async function registerUser(input: RegisterInput) {
@@ -23,9 +28,8 @@ export async function registerUser(input: RegisterInput) {
     input.password,
   );
   const uid = credential.user.uid;
-  const profilePhotoURL = input.imageUri
-    ? await uploadProfilePhoto(uid, input.imageUri)
-    : undefined;
+
+  await sendEmailVerification(credential.user);
 
   const user: VimoXUser = {
     id: uid,
@@ -34,7 +38,7 @@ export async function registerUser(input: RegisterInput) {
     email: input.email,
     gender: input.gender,
     country: input.country,
-    profilePhotoURL: profilePhotoURL ?? null,
+    profilePhotoURL: null,
     isPremium: false,
     blockedUserIds: [],
   };
@@ -46,10 +50,17 @@ export async function registerUser(input: RegisterInput) {
   });
 }
 
-async function uploadProfilePhoto(uid: string, uri: string) {
-  const response = await fetch(uri);
-  const blob = await response.blob();
-  const imageRef = ref(storage, `profiles/${uid}.jpg`);
-  await uploadBytes(imageRef, blob);
-  return getDownloadURL(imageRef);
+export async function forgotPassword(email: string) {
+  await sendPasswordResetEmail(auth, email);
+}
+
+export async function deleteAccount(currentPassword: string) {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error("Aucun utilisateur connecté");
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  const uid = user.uid;
+  await deleteDoc(doc(db, "users", uid));
+  await deleteDoc(doc(db, "waitingUsers", uid)).catch(() => {});
+  await deleteUser(user);
 }
