@@ -1,92 +1,120 @@
-import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
-import { Platform } from "react-native";
+import{Platform}from"react-native";
+import{doc,setDoc,getDoc}from"firebase/firestore";
+import{db}from"../config/firebase";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// ✅ Import conditionnel — évite le crash dans Expo Go
+let Notifications:any=null;
+let Device:any=null;
 
-export async function registerForPushNotifications(
-  uid: string,
-): Promise<string | null> {
-  try {
-    if (!Device.isDevice) return null;
-    const { status: existingStatus } =
-      await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+try{
+  Notifications=require("expo-notifications");
+  Device=require("expo-device");
+
+  Notifications.setNotificationHandler({
+    handleNotification:async()=>({
+      shouldShowAlert:true,
+      shouldPlaySound:true,
+      shouldSetBadge:false,
+    }),
+  });
+}catch(e){
+  console.warn("expo-notifications non disponible dans Expo Go");
+}
+
+export async function registerPushToken(userId:string):Promise<void>{
+  try{
+    if(!Notifications||!Device)return;
+    if(!Device.isDevice)return;
+
+    const{status:existing}=await Notifications.getPermissionsAsync();
+    let finalStatus=existing;
+
+    if(existing!=="granted"){
+      const{status}=await Notifications.requestPermissionsAsync();
+      finalStatus=status;
     }
-    if (finalStatus !== "granted") return null;
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "VimoX",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: "#FF2D2D",
+    if(finalStatus!=="granted")return;
+
+    if(Platform.OS==="android"){
+      await Notifications.setNotificationChannelAsync("default",{
+        name:"VimoX",
+        importance:Notifications.AndroidImportance?.MAX,
+        vibrationPattern:[0,250,250,250],
+        lightColor:"#E8000A",
+        sound:"default",
       });
     }
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
-    return token;
-  } catch (e) {
-    console.log("Notifications non disponibles:", e);
-    return null;
+
+    const token=(await Notifications.getExpoPushTokenAsync()).data;
+    await setDoc(doc(db,"users",userId),{pushToken:token},{merge:true});
+  }catch(e){
+    console.warn("registerPushToken:",e);
   }
 }
 
-export async function sendLocalNotification(
-  title: string,
-  body: string,
-  data?: Record<string, unknown>,
-): Promise<void> {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: { title, body, data: data ?? {}, sound: true },
-      trigger: null,
+async function sendPushNotification(
+  toToken:string,title:string,body:string,
+  data?:Record<string,any>,
+):Promise<void>{
+  try{
+    await fetch("https://exp.host/--/api/v2/push/send",{
+      method:"POST",
+      headers:{Accept:"application/json","Content-Type":"application/json"},
+      body:JSON.stringify({
+        to:toToken,title,body,data:data??{},
+        sound:"default",badge:1,priority:"high",channelId:"default",
+      }),
     });
-  } catch (e) {
-    console.log("Notification locale impossible:", e);
+  }catch(e){
+    console.warn("sendPushNotification:",e);
   }
 }
 
-export async function notifyNewMatch(partnerName?: string): Promise<void> {
-  await sendLocalNotification(
-    "🎯 Nouveau match !",
-    partnerName
-      ? `Tu es connecté avec ${partnerName}`
-      : "Tu as trouvé un partenaire !",
-    { type: "match" },
-  );
+async function getUserToken(userId:string):Promise<string|null>{
+  try{
+    const snap=await getDoc(doc(db,"users",userId));
+    return snap.data()?.pushToken??null;
+  }catch{return null;}
 }
 
 export async function notifyNewMessage(
-  senderName: string,
-  message: string,
-): Promise<void> {
-  await sendLocalNotification(
-    `💬 ${senderName}`,
-    message.length > 50 ? message.slice(0, 50) + "..." : message,
-    { type: "message" },
+  recipientId:string,senderName:string,messageText:string,
+):Promise<void>{
+  const token=await getUserToken(recipientId);
+  if(!token)return;
+  await sendPushNotification(
+    token,`💬 ${senderName}`,
+    messageText.length>60?messageText.substring(0,60)+"...":messageText||"📷 Photo",
+    {type:"message"},
   );
 }
 
-export function subscribeToNotifications(
-  onNotification: (notification: Notifications.Notification) => void,
-): () => void {
-  const sub = Notifications.addNotificationReceivedListener(onNotification);
-  return () => sub.remove();
+export async function notifyNewMatch(
+  recipientId:string,partnerName?:string,
+):Promise<void>{
+  const token=await getUserToken(recipientId);
+  if(!token)return;
+  await sendPushNotification(
+    token,"🔥 Nouveau match !",
+    partnerName?`${partnerName} veut chatter avec toi`:"Quelqu'un veut chatter avec toi",
+    {type:"match"},
+  );
 }
 
-export function subscribeToNotificationTaps(
-  onTap: (response: Notifications.NotificationResponse) => void,
-): () => void {
-  const sub = Notifications.addNotificationResponseReceivedListener(onTap);
-  return () => sub.remove();
+export async function notifyFriendRequest(
+  recipientId:string,senderName:string,
+):Promise<void>{
+  const token=await getUserToken(recipientId);
+  if(!token)return;
+  await sendPushNotification(
+    token,"👥 Demande d'ami",
+    `${senderName} veut t'ajouter en ami`,
+    {type:"friendRequest"},
+  );
+}
+
+export async function clearBadge():Promise<void>{
+  try{
+    if(Notifications)await Notifications.setBadgeCountAsync(0);
+  }catch{}
 }

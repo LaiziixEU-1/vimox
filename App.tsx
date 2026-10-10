@@ -10,20 +10,39 @@ import { ThemeProvider } from "./src/theme/ThemeContext";
 import { useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ConsentScreen, CONSENT_KEY } from "./src/screens/ConsentScreen";
+import { OnboardingScreen, ONBOARDING_KEY } from "./src/screens/OnboardingScreen";
 import { useNavigationContainerRef } from "@react-navigation/native";
-import { useAuth } from "./src/services/AuthContext";
+import { View, ActivityIndicator } from "react-native";
 
 function AppInner() {
   const navigationRef = useNavigationContainerRef();
   const [consentGiven, setConsentGiven] = useState<boolean | null>(null);
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(CONSENT_KEY).then((val) => {
-      setConsentGiven(val === "true");
+    Promise.all([
+      AsyncStorage.getItem(CONSENT_KEY),
+      AsyncStorage.getItem(ONBOARDING_KEY),
+    ]).then(([consent, onboarding]) => {
+      setConsentGiven(consent === "true");
+      setOnboardingDone(onboarding === "true");
     });
   }, []);
 
-  if (consentGiven === null) return null;
+  // ✅ Fix écran blanc — spinner pendant le chargement
+  if (consentGiven === null || onboardingDone === null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#030303",
+        alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color="#E8000A" size="large" />
+      </View>
+    );
+  }
+
+  // ✅ Fix ordre — onboarding avant consent
+  if (!onboardingDone) {
+    return <OnboardingScreen onDone={() => setOnboardingDone(true)} />;
+  }
 
   if (!consentGiven) {
     return <ConsentScreen onAccept={() => setConsentGiven(true)} />;
@@ -31,7 +50,7 @@ function AppInner() {
 
   return (
     <NavigationContainer ref={navigationRef}>
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
       <RootNavigator />
     </NavigationContainer>
   );

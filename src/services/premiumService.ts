@@ -2,7 +2,7 @@ import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../config/firebase";
 
 // Nombre de skips gratuits par session
-const FREE_SKIPS = 3;
+const FREE_SKIPS = 5;
 
 export function canUseUnlimitedSkip(
   isPremium: boolean,

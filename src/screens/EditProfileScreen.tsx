@@ -5,243 +5,319 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { GlassPanel } from "../components/GlassPanel";
-import { NeonButton } from "../components/NeonButton";
 import { colors } from "../theme/colors";
+import { RootStackParamList } from "../models/types";
 import { useAuth } from "../services/AuthContext";
 import { db } from "../config/firebase";
-import {
-  pickProfileImage,
-  takeProfilePhoto,
-  uploadProfilePhoto,
-} from "../services/storageService";
-import { RootStackParamList, Gender } from "../models/types";
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
-
-const countries = [
+const COUNTRIES = [
   "France",
-  "Suisse",
   "Belgique",
+  "Suisse",
   "Canada",
   "Maroc",
-  "Algérie",
   "Tunisie",
-];
-const genders: Exclude<Gender, "Tous">[] = [
-  "Femme",
-  "Homme",
-  "Non-binaire",
-  "Autre",
+  "Algérie",
+  "Autres",
 ];
 
 export function EditProfileScreen({ navigation }: Props) {
-  const { profile, firebaseUser } = useAuth();
+  const { profile } = useAuth();
   const [name, setName] = useState(profile?.name ?? "");
-  const [age, setAge] = useState(String(profile?.age ?? "16"));
+  const [bio, setBio] = useState(profile?.bio ?? "");
   const [country, setCountry] = useState(profile?.country ?? "France");
-  const [gender, setGender] = useState<Exclude<Gender, "Tous">>(
-    profile?.gender ?? "Autre",
-  );
-  const [imageUri, setImageUri] = useState<string>();
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handlePickImage() {
-    try {
-      const uri = await pickProfileImage();
-      if (uri) setImageUri(uri);
-    } catch (e) {
-      Alert.alert("Erreur", e instanceof Error ? e.message : "Erreur inconnue");
+  async function pickPhoto() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission refusée");
+      return;
     }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+    if (!res.canceled && res.assets[0]) setPhotoUri(res.assets[0].uri);
   }
 
-  async function handleTakePhoto() {
-    try {
-      const uri = await takeProfilePhoto();
-      if (uri) setImageUri(uri);
-    } catch (e) {
-      Alert.alert("Erreur", e instanceof Error ? e.message : "Erreur inconnue");
+  async function handleSave() {
+    if (!profile) return;
+    if (!name.trim()) {
+      Alert.alert("Erreur", "Le prénom est obligatoire.");
+      return;
     }
-  }
-
-  async function save() {
-    if (!profile || !firebaseUser) return;
-    const parsedAge = Number(age);
-    if (isNaN(parsedAge) || parsedAge < 16) {
-      return Alert.alert("Erreur", "L'âge minimum est 16 ans");
-    }
+    setLoading(true);
     try {
-      setLoading(true);
-      let photoURL = profile.profilePhotoURL;
-      if (imageUri) {
-        photoURL = await uploadProfilePhoto(
-          firebaseUser.uid,
-          imageUri,
-          ({ progress }) => setUploadProgress(progress),
-        );
-      }
-      await updateDoc(doc(db, "users", firebaseUser.uid), {
-        name,
-        age: parsedAge,
+      const updates: Record<string, any> = {
+        name: name.trim(),
+        bio: bio.trim(),
         country,
-        gender,
-        profilePhotoURL: photoURL,
         updatedAt: serverTimestamp(),
-      });
-      Alert.alert("Profil mis à jour ✅");
-      navigation.goBack();
-    } catch (e) {
-      Alert.alert("Erreur", e instanceof Error ? e.message : "Erreur inconnue");
+      };
+      if (photoUri) {
+        const formData = new FormData();
+        formData.append("file", {
+          uri: photoUri,
+          type: "image/jpeg",
+          name: "profile.jpg",
+        } as any);
+        formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+        formData.append("folder", "profiles");
+        const res = await fetch(
+          `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+          { method: "POST", body: formData },
+        );
+        const data = await res.json();
+        if (data.secure_url) updates.profilePhotoURL = data.secure_url;
+      }
+      await updateDoc(doc(db, "users", profile.id), updates);
+      Alert.alert("✅ Profil mis à jour !", " ", [
+        { text: "OK", onPress: () => navigation.goBack() },
+      ]);
+    } catch {
+      Alert.alert("Erreur", "Impossible de sauvegarder.");
     } finally {
       setLoading(false);
-      setUploadProgress(0);
     }
   }
 
-  const photoSource = imageUri
-    ? { uri: imageUri }
-    : profile?.profilePhotoURL
-      ? { uri: profile.profilePhotoURL }
-      : null;
+  const currentPhoto = photoUri ?? profile?.profilePhotoURL;
+  const initials =
+    profile?.name
+      ?.split(" ")
+      .map((n: string) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) ?? "?";
 
   return (
-    <LinearGradient
-      colors={[colors.black, "#111122", "#16080D"]}
-      style={styles.root}
-    >
+    <SafeAreaView style={s.root}>
+      <View style={s.header}>
+        <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
+          <Text style={s.back}>‹</Text>
+        </Pressable>
+        <Text style={s.title}>Modifier le profil</Text>
+        <Pressable onPress={handleSave} disabled={loading} style={s.saveBtn}>
+          <Text style={s.saveTxt}>{loading ? "..." : "Enregistrer"}</Text>
+        </Pressable>
+      </View>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.title}>Modifier mon profil</Text>
-          <GlassPanel style={{ gap: 14 }}>
-            <Pressable onPress={handlePickImage} style={styles.avatar}>
-              {photoSource ? (
-                <Image source={photoSource} style={styles.avatarImage} />
+        <ScrollView
+          contentContainerStyle={s.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={s.photoSection}>
+            <Pressable onPress={pickPhoto} style={s.avatarWrap}>
+              {currentPhoto ? (
+                <Image source={{ uri: currentPhoto }} style={s.avatar} />
               ) : (
-                <Text style={styles.avatarText}>+</Text>
+                <View style={s.avatarPh}>
+                  <Text style={s.initials}>{initials}</Text>
+                </View>
               )}
+              <View style={s.camBtn}>
+                <Text style={s.camIcon}>📷</Text>
+              </View>
             </Pressable>
-            {uploadProgress > 0 && uploadProgress < 100 && (
-              <Text style={styles.progress}>Upload : {uploadProgress}%</Text>
-            )}
-            <View style={styles.row}>
-              <Pressable onPress={handlePickImage}>
-                <Text style={styles.link}>Galerie</Text>
-              </Pressable>
-              <Pressable onPress={handleTakePhoto}>
-                <Text style={styles.link}>Caméra</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Nom"
-              placeholderTextColor={colors.muted}
-              value={name}
-              onChangeText={setName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Âge"
-              placeholderTextColor={colors.muted}
-              value={age}
-              onChangeText={setAge}
-              keyboardType="number-pad"
-            />
-            <Text style={styles.label}>Genre</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.choices}>
-                {genders.map((g) => (
-                  <Pressable
-                    key={g}
-                    onPress={() => setGender(g)}
-                    style={[styles.choice, gender === g && styles.choiceActive]}
-                  >
-                    <Text style={styles.choiceText}>{g}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-            <Text style={styles.label}>Pays</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.choices}>
-                {countries.map((c) => (
-                  <Pressable
-                    key={c}
-                    onPress={() => setCountry(c)}
-                    style={[
-                      styles.choice,
-                      country === c && styles.choiceActive,
-                    ]}
-                  >
-                    <Text style={styles.choiceText}>{c}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-          </GlassPanel>
-          <NeonButton
-            title={
-              loading
-                ? `Sauvegarde... ${uploadProgress > 0 ? uploadProgress + "%" : ""}`
-                : "Sauvegarder"
-            }
-            onPress={save}
-            disabled={loading}
+          </View>
+          <Text style={s.label}>PRÉNOM</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="Ton prénom"
+            placeholderTextColor={colors.muted}
+            style={s.input}
           />
+          <Text style={s.label}>BIO</Text>
+          <TextInput
+            value={bio}
+            onChangeText={setBio}
+            placeholder="Quelques mots sur toi..."
+            placeholderTextColor={colors.muted}
+            multiline
+            maxLength={120}
+            style={[s.input, { height: 90, textAlignVertical: "top" }]}
+          />
+          <Text style={s.label}>PAYS</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginHorizontal: -20 }}
+            contentContainerStyle={{ paddingHorizontal: 20 }}
+          >
+            <View style={s.chips}>
+              {COUNTRIES.map((c) => (
+                <Pressable
+                  key={c}
+                  onPress={() => setCountry(c)}
+                  style={[s.chip, c === country && s.chipOn]}
+                >
+                  <Text style={[s.chipTxt, c === country && s.chipTxtOn]}>
+                    {c}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+          <View style={s.readOnly}>
+            <Text style={s.readOnlyLabel}>EMAIL (non modifiable)</Text>
+            <Text style={s.readOnlyVal}>{profile?.email}</Text>
+          </View>
+          <Pressable
+            onPress={handleSave}
+            disabled={loading}
+            style={[s.btn, loading && { opacity: 0.6 }]}
+          >
+            <Text style={s.btnTxt}>
+              {loading ? "Enregistrement..." : "Enregistrer les modifications"}
+            </Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { padding: 22, paddingTop: 60, gap: 16 },
-  title: { color: colors.text, fontSize: 24, fontWeight: "800" },
-  avatar: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    alignSelf: "center",
-    borderWidth: 2,
-    borderColor: colors.neonBlue,
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.black },
+  header: {
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.panelStrong,
   },
-  avatarImage: { width: "100%", height: "100%", borderRadius: 55 },
-  avatarText: { color: colors.neonBlue, fontSize: 48, fontWeight: "300" },
-  progress: { color: colors.neonBlue, textAlign: "center", fontWeight: "700" },
-  row: { flexDirection: "row", gap: 24, justifyContent: "center" },
-  link: { color: colors.neonBlue, fontWeight: "800" },
-  input: {
-    minHeight: 52,
-    borderRadius: 14,
-    backgroundColor: colors.panelStrong,
-    color: colors.text,
+  back: { color: colors.text, fontSize: 28, fontWeight: "300" },
+  title: { flex: 1, color: colors.text, fontSize: 18, fontWeight: "900" },
+  saveBtn: {
+    backgroundColor: "rgba(232,0,10,0.15)",
+    borderWidth: 1,
+    borderColor: colors.neonRed,
+    borderRadius: 10,
     paddingHorizontal: 14,
-    fontSize: 16,
+    paddingVertical: 7,
   },
-  label: { color: colors.muted, fontSize: 13, fontWeight: "700" },
-  choices: { flexDirection: "row", gap: 8 },
-  choice: {
-    paddingHorizontal: 12,
+  saveTxt: { color: colors.neonRed, fontSize: 13, fontWeight: "700" },
+  scroll: { padding: 20, paddingBottom: 40 },
+  photoSection: { alignItems: "center", marginBottom: 24 },
+  avatarWrap: { position: "relative" },
+  avatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 3,
+    borderColor: colors.neonRed,
+  },
+  avatarPh: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: "rgba(232,0,10,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: colors.neonRed,
+  },
+  initials: { color: colors.neonRed, fontSize: 36, fontWeight: "900" },
+  camBtn: {
+    position: "absolute",
+    bottom: 2,
+    right: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.neonRed,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: colors.black,
+  },
+  camIcon: { fontSize: 12 },
+  label: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 8,
+    marginTop: 16,
+  },
+  input: {
+    color: colors.text,
+    fontSize: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chips: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  chip: {
+    paddingHorizontal: 14,
     paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: colors.panelStrong,
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  choiceActive: { backgroundColor: colors.neonRed },
-  choiceText: { color: colors.text, fontWeight: "700" },
+  chipOn: {
+    backgroundColor: "rgba(232,0,10,0.15)",
+    borderColor: colors.neonRed,
+  },
+  chipTxt: { color: colors.muted, fontSize: 13, fontWeight: "600" },
+  chipTxtOn: { color: colors.neonRed },
+  readOnly: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 16,
+  },
+  readOnlyLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  readOnlyVal: { color: "rgba(255,255,255,0.4)", fontSize: 14 },
+  btn: {
+    backgroundColor: colors.neonRed,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 20,
+    shadowColor: colors.neonRed,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  btnTxt: { color: "#fff", fontSize: 14, fontWeight: "900", letterSpacing: 1 },
 });

@@ -1,79 +1,113 @@
-import { Pressable, StyleSheet, Text, ViewStyle } from "react-native";
+import { useRef } from "react";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme/colors";
 
-type Props = {
+interface Props {
   title: string;
   onPress: () => void;
-  danger?: boolean;
   disabled?: boolean;
-  style?: ViewStyle;
-  accessibilityLabel?: string;
-  accessibilityHint?: string;
-  variant?: "filled" | "outline";
-};
+  variant?: "primary" | "secondary" | "danger";
+  style?: any;
+}
 
 export function NeonButton({
   title,
   onPress,
-  danger,
-  disabled,
+  disabled = false,
+  variant = "primary",
   style,
-  accessibilityLabel,
-  accessibilityHint,
-  variant = "filled",
 }: Props) {
+  const scale = useRef(new Animated.Value(1)).current;
+  function onIn() {
+    Animated.spring(scale, {
+      toValue: 0.96,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 0,
+    }).start();
+  }
+  function onOut() {
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 4,
+    }).start();
+  }
   return (
     <Pressable
       onPress={onPress}
+      onPressIn={onIn}
+      onPressOut={onOut}
       disabled={disabled}
-      style={({ pressed }) => [
-        styles.button,
-        variant === "outline" && styles.outline,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-        style,
-      ]}
-      accessible={true}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? title}
-      accessibilityHint={accessibilityHint}
-      accessibilityState={{ disabled: !!disabled }}
+      style={style}
     >
-      <Text style={[styles.text, variant === "outline" && styles.outlineText]}>
-        {title}
-      </Text>
+      <Animated.View
+        style={[
+          s.btn,
+          variant === "primary" && s.primary,
+          variant === "secondary" && s.secondary,
+          variant === "danger" && s.danger,
+          disabled && s.disabled,
+          { transform: [{ scale }] },
+        ]}
+      >
+        <View style={s.shine} />
+        <Text
+          style={[
+            s.txt,
+            variant === "secondary" && s.txtSec,
+            variant === "danger" && s.txtDgr,
+          ]}
+        >
+          {title}
+        </Text>
+      </Animated.View>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  button: {
-    minHeight: 52,
-    borderRadius: 8,
+const s = StyleSheet.create({
+  btn: {
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 18,
-    backgroundColor: colors.neonRed,
+    overflow: "hidden",
+    position: "relative",
   },
-  outline: {
+  primary: {
+    backgroundColor: colors.neonRed,
+    shadowColor: colors.neonRed,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  secondary: {
     backgroundColor: "transparent",
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.neonRed,
   },
-  text: {
+  danger: {
+    backgroundColor: "rgba(232,0,10,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(232,0,10,0.3)",
+  },
+  disabled: { opacity: 0.5 },
+  shine: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 22,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  txt: {
     color: colors.text,
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 14,
+    fontWeight: "900",
     letterSpacing: 1,
-    textTransform: "uppercase",
   },
-  outlineText: {
-    color: colors.neonRed,
-  },
-  disabled: {
-    opacity: 0.45,
-  },
-  pressed: {
-    opacity: 0.8,
-  },
+  txtSec: { color: colors.neonRed },
+  txtDgr: { color: colors.neonRed },
 });

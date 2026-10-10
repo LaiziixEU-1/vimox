@@ -1,62 +1,92 @@
 import { useState } from "react";
-import { ComponentProps } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { NeonButton } from "../components/NeonButton";
-import { VimoXLogo } from "../components/VimoXLogo";
-import { Gender } from "../models/types";
-import { registerUser } from "../services/authService";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { colors } from "../theme/colors";
+import { RootStackParamList } from "../models/types";
+import { registerUser } from "../services/authService";
 
-const genders: Exclude<Gender, "Tous">[] = [
-  "Femme",
+type Props = NativeStackScreenProps<RootStackParamList, "Register">;
+const COUNTRIES = [
+  "France",
+  "Belgique",
+  "Suisse",
+  "Canada",
+  "Maroc",
+  "Tunisie",
+  "Algérie",
+  "Sénégal",
+  "Autres",
+];
+const GENDERS: Array<"Homme" | "Femme" | "Non-binaire" | "Autre"> = [
   "Homme",
+  "Femme",
   "Non-binaire",
   "Autre",
 ];
-const countries = [
-  "France",
-  "Suisse",
-  "Belgique",
-  "Canada",
-  "Maroc",
-  "Algérie",
-  "Tunisie",
-];
 
-export function RegistrationScreen() {
+export function RegistrationScreen({ navigation }: Props) {
   const [name, setName] = useState("");
-  const [age, setAge] = useState("16");
+  const [age, setAge] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [gender, setGender] = useState<Exclude<Gender, "Tous">>("Autre");
+  const [confirm, setConfirm] = useState("");
+  const [gender, setGender] = useState<
+    "Homme" | "Femme" | "Non-binaire" | "Autre"
+  >("Homme");
   const [country, setCountry] = useState("France");
   const [loading, setLoading] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
 
-  async function submit() {
+  async function handleRegister() {
+    if (name.trim().length < 2) {
+      Alert.alert("Erreur", "Prénom trop court.");
+      return;
+    }
+    const a = parseInt(age);
+    if (isNaN(a) || a < 16) {
+      Alert.alert("Erreur", "Âge minimum : 16 ans.");
+      return;
+    }
+    if (!email.includes("@")) {
+      Alert.alert("Erreur", "Email invalide.");
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert("Erreur", "Mot de passe trop court (min. 6 caractères).");
+      return;
+    }
+    if (password !== confirm) {
+      Alert.alert("Erreur", "Les mots de passe ne correspondent pas.");
+      return;
+    }
+    setLoading(true);
     try {
-      setLoading(true);
       await registerUser({
-        name,
-        age: Number(age),
-        email,
+        name: name.trim(),
+        age: a,
+        email: email.trim().toLowerCase(),
         password,
         gender,
         country,
       });
-    } catch (error) {
+    } catch (e: any) {
+      const msg = e?.message ?? "";
       Alert.alert(
         "Inscription impossible",
-        error instanceof Error ? error.message : "Erreur inconnue",
+        msg.includes("EMAIL_EXISTS") || msg.includes("email-already-in-use")
+          ? "Cet email est déjà utilisé."
+          : "Vérifie ta connexion et réessaie.",
       );
     } finally {
       setLoading(false);
@@ -64,181 +94,213 @@ export function RegistrationScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={s.root}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.logoContainer}>
-            <VimoXLogo size={120} showWordmark={false} />
-            <Text style={styles.brand}>
-              VIMO<Text style={styles.brandX}>X</Text>
-            </Text>
-            <Text style={styles.subtitle}>Créer un compte</Text>
-            <Text style={styles.subtitleSub}>Rejoins la communauté VimoX</Text>
-          </View>
-
-          <View style={styles.form}>
-            <Input
-              placeholder="Nom complet"
-              value={name}
-              onChangeText={setName}
-              icon="👤"
-            />
-            <Input
-              placeholder="Âge"
-              value={age}
-              onChangeText={setAge}
-              keyboardType="number-pad"
-              icon="🎂"
-            />
-            <Input
-              placeholder="Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              icon="✉"
-            />
-            <Input
-              placeholder="Mot de passe"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              icon="🔒"
-            />
-
-            <Text style={styles.label}>Genre</Text>
-            <View style={styles.choices}>
-              {genders.map((g) => (
-                <Pressable
-                  key={g}
-                  onPress={() => setGender(g)}
-                  style={[styles.choice, gender === g && styles.choiceActive]}
-                >
-                  <Text
-                    style={[
-                      styles.choiceText,
-                      gender === g && styles.choiceTextActive,
-                    ]}
-                  >
-                    {g}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Pays</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.choicesRow}>
-                {countries.map((c) => (
-                  <Pressable
-                    key={c}
-                    onPress={() => setCountry(c)}
-                    style={[
-                      styles.choice,
-                      country === c && styles.choiceActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.choiceText,
-                        country === c && styles.choiceTextActive,
-                      ]}
-                    >
-                      {c}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-          </View>
-
-          <NeonButton
-            title={loading ? "Création..." : "S'inscrire"}
-            onPress={submit}
-            disabled={loading}
+        <View style={s.header}>
+          <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
+            <Text style={s.back}>‹</Text>
+          </Pressable>
+          <Text style={s.title}>Créer un compte</Text>
+        </View>
+        <ScrollView
+          contentContainerStyle={s.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Input
+            label="PRÉNOM"
+            value={name}
+            onChange={setName}
+            placeholder="Ton prénom"
+            autoFocus
           />
-
-          <Text style={styles.note}>
-            Tu pourras ajouter ta photo depuis ton profil.
-          </Text>
+          <Input
+            label="ÂGE"
+            value={age}
+            onChange={setAge}
+            placeholder="ex. 22"
+            keyboardType="numeric"
+          />
+          <Input
+            label="EMAIL"
+            value={email}
+            onChange={setEmail}
+            placeholder="ton@email.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+          <Input
+            label="MOT DE PASSE"
+            value={password}
+            onChange={setPassword}
+            placeholder="••••••••"
+            secureTextEntry={!showPwd}
+            autoCapitalize="none"
+          />
+          <Input
+            label="CONFIRMER"
+            value={confirm}
+            onChange={setConfirm}
+            placeholder="••••••••"
+            secureTextEntry={!showPwd}
+            autoCapitalize="none"
+          />
+          <Pressable onPress={() => setShowPwd((v) => !v)} style={s.showPwd}>
+            <Text style={s.showPwdTxt}>
+              {showPwd ? "Cacher" : "Afficher"} le mot de passe
+            </Text>
+          </Pressable>
+          <Text style={s.sectionLabel}>GENRE</Text>
+          <View style={s.chips}>
+            {GENDERS.map((g) => (
+              <Pressable
+                key={g}
+                onPress={() => setGender(g)}
+                style={[s.chip, g === gender && s.chipOn]}
+              >
+                <Text style={[s.chipTxt, g === gender && s.chipTxtOn]}>
+                  {g}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={s.sectionLabel}>PAYS</Text>
+          <View style={s.chips}>
+            {COUNTRIES.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setCountry(c)}
+                style={[s.chip, c === country && s.chipOn]}
+              >
+                <Text style={[s.chipTxt, c === country && s.chipTxtOn]}>
+                  {c}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            onPress={handleRegister}
+            disabled={loading}
+            style={[s.btn, loading && { opacity: 0.7 }]}
+          >
+            <Text style={s.btnTxt}>
+              {loading ? "Création..." : "Créer mon compte 🚀"}
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => navigation.goBack()} style={s.loginBtn}>
+            <Text style={s.loginBtnTxt}>Déjà un compte ? Se connecter</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 function Input({
-  icon,
-  ...props
-}: ComponentProps<typeof TextInput> & { icon?: string }) {
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboardType,
+  autoCapitalize,
+  secureTextEntry,
+  autoFocus,
+}: any) {
   return (
-    <View style={styles.inputWrapper}>
-      {icon && <Text style={styles.inputIcon}>{icon}</Text>}
+    <View style={inp.wrap}>
+      <Text style={inp.label}>{label}</Text>
       <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
         placeholderTextColor={colors.muted}
-        style={styles.input}
-        {...props}
+        keyboardType={keyboardType ?? "default"}
+        autoCapitalize={autoCapitalize ?? "words"}
+        secureTextEntry={secureTextEntry}
+        autoFocus={autoFocus}
+        style={inp.input}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.black },
-  content: { padding: 24, paddingTop: 60, gap: 20 },
-  logoContainer: { alignItems: "center", gap: 6 },
-  brand: {
-    color: colors.text,
-    fontSize: 32,
-    fontWeight: "900",
-    letterSpacing: 4,
-  },
-  brandX: { color: colors.neonRed },
-  subtitle: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: "800",
-    marginTop: 8,
-  },
-  subtitleSub: { color: colors.muted, fontSize: 14 },
-  form: { gap: 12 },
+const inp = StyleSheet.create({
+  wrap: { marginBottom: 12 },
   label: {
     color: colors.muted,
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 1,
-    textTransform: "uppercase",
+    letterSpacing: 1.5,
+    marginBottom: 6,
   },
-  inputWrapper: {
+  input: {
+    color: colors.text,
+    fontSize: 15,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+});
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.black },
+  header: {
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.card,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: 10,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  back: { color: colors.text, fontSize: 28, fontWeight: "300" },
+  title: { color: colors.text, fontSize: 18, fontWeight: "900" },
+  scroll: { padding: 20, paddingBottom: 40 },
+  showPwd: { alignSelf: "flex-end", marginBottom: 12 },
+  showPwdTxt: { color: colors.neonRed, fontSize: 12, fontWeight: "600" },
+  sectionLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 18 },
+  chip: {
     paddingHorizontal: 14,
-    minHeight: 52,
-  },
-  inputIcon: { fontSize: 16, marginRight: 10, opacity: 0.5 },
-  input: { flex: 1, color: colors.text, fontSize: 15 },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  choicesRow: { flexDirection: "row", gap: 8 },
-  choice: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 9,
+    borderRadius: 20,
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.card,
   },
-  choiceActive: {
+  chipOn: {
+    backgroundColor: "rgba(232,0,10,0.15)",
     borderColor: colors.neonRed,
-    backgroundColor: "rgba(232,0,10,0.1)",
   },
-  choiceText: { color: colors.muted, fontWeight: "600", fontSize: 13 },
-  choiceTextActive: { color: colors.neonRed },
-  note: { color: colors.muted, textAlign: "center", fontSize: 12 },
+  chipTxt: { color: colors.muted, fontSize: 13, fontWeight: "600" },
+  chipTxtOn: { color: colors.neonRed },
+  btn: {
+    backgroundColor: colors.neonRed,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 8,
+    shadowColor: colors.neonRed,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  btnTxt: { color: "#fff", fontSize: 15, fontWeight: "900", letterSpacing: 1 },
+  loginBtn: { alignItems: "center", paddingVertical: 14 },
+  loginBtnTxt: { color: colors.muted, fontSize: 13 },
 });

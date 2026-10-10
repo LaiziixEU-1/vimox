@@ -1,410 +1,455 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Animated,
   Alert,
+  Animated,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { doc, onSnapshot } from "firebase/firestore";
-import { NeonButton } from "../components/NeonButton";
-import { VimoXLogo } from "../components/VimoXLogo";
-import { RootStackParamList, Gender, MatchFilters } from "../models/types";
-import { db } from "../config/firebase";
-import { nextMatch, startMatching } from "../services/matchService";
-import { useAuth } from "../services/AuthContext";
-import {
-  activatePremiumDemo,
-  canUseUnlimitedSkip,
-} from "../services/premiumService";
 import { colors } from "../theme/colors";
-import { notifyNewMatch } from "../services/notificationService";
+import { RootStackParamList } from "../models/types";
+import { useAuth } from "../services/AuthContext";
+import { findMatch, cancelSearch } from "../services/matchService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Matching">;
-const countries = [
+const GENDERS = ["Tous", "Homme", "Femme", "Non-binaire"];
+const COUNTRIES = [
   "Tous",
   "France",
-  "Suisse",
   "Belgique",
+  "Suisse",
   "Canada",
   "Maroc",
-  "Algérie",
   "Tunisie",
+  "Algérie",
+  "Autres",
 ];
-const genders: Gender[] = ["Tous", "Femme", "Homme", "Non-binaire", "Autre"];
+const AGE_MINS = [16, 18, 21, 25, 30, 40];
+const AGE_MAXS = [25, 30, 40, 50, 60, 99];
 
 export function MatchingScreen({ navigation }: Props) {
-  const { profile, logout } = useAuth();
-  const [filters, setFilters] = useState<MatchFilters>({
-    minAge: 16,
-    maxAge: 35,
-    gender: "Tous",
-    country: "Tous",
-  });
-  const [status, setStatus] = useState("Tout est prêt !");
-  const [statusSub, setStatusSub] = useState(
-    "Nous allons te trouver des personnes incroyables 🔥",
-  );
+  const { profile } = useAuth();
+  const [gender, setGender] = useState("Tous");
+  const [country, setCountry] = useState("Tous");
+  const [ageMin, setAgeMin] = useState(16);
+  const [ageMax, setAgeMax] = useState(99);
   const [searching, setSearching] = useState(false);
-  const [usedSkips, setUsedSkips] = useState(0);
-  const pulse = useRef(new Animated.Value(1)).current;
+  const [ellipsis, setEllipsis] = useState(".");
+  const roomRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!profile) return;
-    return onSnapshot(doc(db, "users", profile.id), (snapshot) => {
-      const roomId = snapshot.data()?.activeMatchId;
-      if (roomId) {
-        setSearching(false);
-        navigation.navigate("ChatRoom", { roomId });
-      }
-    });
-  }, [navigation, profile]);
+  const pulse = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(0.8)).current;
+  const rotate = useRef(new Animated.Value(0)).current;
+  const formOpacity = useRef(new Animated.Value(1)).current;
+  const formY = useRef(new Animated.Value(0)).current;
+  const searchOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!searching) return;
-    const anim = Animated.loop(
+    const interval = setInterval(
+      () => setEllipsis((e) => (e.length >= 3 ? "." : e + ".")),
+      500,
+    );
+    const pulseAnim = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1.15,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }),
+        Animated.parallel([
+          Animated.timing(pulse, {
+            toValue: 1.2,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseOpacity, {
+            toValue: 0.2,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(pulse, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseOpacity, {
+            toValue: 0.8,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ]),
       ]),
     );
-    anim.start();
-    return () => anim.stop();
+    const rotateAnim = Animated.loop(
+      Animated.timing(rotate, {
+        toValue: 1,
+        duration: 4000,
+        useNativeDriver: true,
+      }),
+    );
+    pulseAnim.start();
+    rotateAnim.start();
+    return () => {
+      clearInterval(interval);
+      pulseAnim.stop();
+      rotateAnim.stop();
+    };
   }, [searching]);
 
-  async function match() {
-    if (!profile) return;
+  const spin = rotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  function showSearch() {
     setSearching(true);
-    setStatus("Recherche en cours...");
-    setStatusSub("Nous cherchons ton prochain match 🔥");
+    Animated.parallel([
+      Animated.timing(formOpacity, {
+        toValue: 0,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+      Animated.timing(formY, {
+        toValue: -20,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+      Animated.timing(searchOpacity, {
+        toValue: 1,
+        duration: 350,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }
+
+  function hideSearch() {
+    setSearching(false);
+    Animated.parallel([
+      Animated.timing(formOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(formY, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(searchOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }
+
+  async function handleStart() {
+    if (!profile) return;
+    showSearch();
     try {
-      const roomId = await startMatching(profile, filters);
-      if (roomId) {
-        await notifyNewMatch(undefined).catch(() => {});
-        navigation.navigate("ChatRoom", { roomId });
-      } else {
-        setStatus("En attente...");
-        setStatusSub("On cherche quelqu'un pour toi ⏳");
-      }
-    } catch (error) {
-      setSearching(false);
-      setStatus("Tout est prêt !");
-      setStatusSub("Nous allons te trouver des personnes incroyables 🔥");
-      Alert.alert(
-        "Matching impossible",
-        error instanceof Error ? error.message : "Erreur inconnue",
-      );
+      const filters = {
+        gender: gender === "Tous" ? undefined : gender,
+        country: country === "Tous" ? undefined : country,
+        ageMin,
+        ageMax,
+      };
+      const id = await findMatch(profile, filters);
+      roomRef.current = id;
+      navigation.replace("ChatRoom", { roomId: id });
+    } catch {
+      hideSearch();
+      Alert.alert("Aucun partenaire 😔", "Réessaie dans quelques secondes !");
     }
   }
 
-  async function next() {
-    if (!profile) return;
-    if (!canUseUnlimitedSkip(profile.isPremium, usedSkips)) {
-      Alert.alert("Premium requis", "Passe Premium pour les skips illimités.");
-      return;
-    }
-    setUsedSkips((v) => v + 1);
-    const roomId = await nextMatch(profile, profile.activeMatchId, filters);
-    if (roomId) navigation.navigate("ChatRoom", { roomId });
+  function handleCancel() {
+    if (roomRef.current) cancelSearch(roomRef.current).catch(() => {});
+    hideSearch();
   }
 
   return (
-    <View style={styles.root}>
-      <ScrollView contentContainerStyle={styles.content}>
+    <View style={s.root}>
+      <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.navigate("Profile" as never)}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {profile?.name?.[0]?.toUpperCase() ?? "?"}
-              </Text>
-            </View>
-          </Pressable>
-          <Text style={styles.appName}>
-            VIMO<Text style={styles.appX}>X</Text>
-          </Text>
-          <Pressable onPress={logout}>
-            <Text style={styles.logout}>Sortir</Text>
+        <View style={s.header}>
+          <View>
+            <Text style={s.headerTitle}>Match</Text>
+            <Text style={s.headerSub}>Trouve un inconnu · maintenant</Text>
+          </View>
+          <Pressable
+            onPress={() => navigation.navigate("Profile")}
+            style={s.profileBtn}
+          >
+            <Text style={s.profileBtnTxt}>👤</Text>
           </Pressable>
         </View>
 
-        {/* Logo animé */}
-        <View style={styles.logoSection}>
-          <Animated.View style={{ transform: [{ scale: pulse }] }}>
-            <View style={styles.logoBg}>
-              <VimoXLogo size={160} showWordmark={false} />
-            </View>
-          </Animated.View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={s.scroll}>
+          <Animated.View
+            style={[
+              s.filtersWrap,
+              { opacity: formOpacity, transform: [{ translateY: formY }] },
+            ]}
+            pointerEvents={searching ? "none" : "auto"}
+          >
+            <Text style={s.sectionTitle}>Filtres de match</Text>
 
-          {/* Filtres visuels autour du logo */}
-          <View style={styles.filtersAround}>
-            <View style={styles.filterBadge}>
-              <Text style={styles.filterBadgeText}>♂♀</Text>
-            </View>
-            <View style={styles.filterBadge}>
-              <Text style={styles.filterBadgeText}>
-                {filters.minAge}-{filters.maxAge}
-              </Text>
-            </View>
-            <View style={styles.filterBadge}>
-              <Text style={styles.filterBadgeText}>
-                {filters.country === "Tous"
-                  ? "🌍"
-                  : filters.country.slice(0, 2)}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.status}>{status}</Text>
-          <Text style={styles.statusSub}>{statusSub}</Text>
-        </View>
-
-        {/* Filtres */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>FILTRES</Text>
-          <View style={styles.filterRow}>
-            <Text style={styles.filterLabel}>Âge min: {filters.minAge}</Text>
-            <View style={styles.stepperBtns}>
-              <Pressable
-                onPress={() =>
-                  setFilters((f) => ({
-                    ...f,
-                    minAge: Math.max(16, f.minAge - 1),
-                  }))
-                }
-                style={styles.stepBtn}
-              >
-                <Text style={styles.stepBtnText}>−</Text>
-              </Pressable>
-              <Pressable
-                onPress={() =>
-                  setFilters((f) => ({
-                    ...f,
-                    minAge: Math.min(f.maxAge, f.minAge + 1),
-                  }))
-                }
-                style={styles.stepBtn}
-              >
-                <Text style={styles.stepBtnText}>+</Text>
-              </Pressable>
-            </View>
-          </View>
-          <View style={styles.filterRow}>
-            <Text style={styles.filterLabel}>Âge max: {filters.maxAge}</Text>
-            <View style={styles.stepperBtns}>
-              <Pressable
-                onPress={() =>
-                  setFilters((f) => ({
-                    ...f,
-                    maxAge: Math.max(f.minAge, f.maxAge - 1),
-                  }))
-                }
-                style={styles.stepBtn}
-              >
-                <Text style={styles.stepBtnText}>−</Text>
-              </Pressable>
-              <Pressable
-                onPress={() =>
-                  setFilters((f) => ({
-                    ...f,
-                    maxAge: Math.min(99, f.maxAge + 1),
-                  }))
-                }
-                style={styles.stepBtn}
-              >
-                <Text style={styles.stepBtnText}>+</Text>
-              </Pressable>
-            </View>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.chips}>
-              {genders.map((g) => (
+            <Text style={s.filterLabel}>Genre</Text>
+            <View style={s.chips}>
+              {GENDERS.map((g) => (
                 <Pressable
                   key={g}
-                  onPress={() => setFilters((f) => ({ ...f, gender: g }))}
-                  style={[
-                    styles.chip,
-                    filters.gender === g && styles.chipActive,
-                  ]}
+                  onPress={() => setGender(g)}
+                  style={[s.chip, g === gender && s.chipActive]}
                 >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      filters.gender === g && styles.chipTextActive,
-                    ]}
-                  >
+                  <Text style={[s.chipText, g === gender && s.chipTextActive]}>
                     {g}
                   </Text>
                 </Pressable>
               ))}
             </View>
-          </ScrollView>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.chips}>
-              {countries.map((c) => (
-                <Pressable
-                  key={c}
-                  onPress={() => setFilters((f) => ({ ...f, country: c }))}
-                  style={[
-                    styles.chip,
-                    filters.country === c && styles.chipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      filters.country === c && styles.chipTextActive,
-                    ]}
+
+            <Text style={s.filterLabel}>Pays</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginHorizontal: -20 }}
+              contentContainerStyle={{ paddingHorizontal: 20 }}
+            >
+              <View style={s.chips}>
+                {COUNTRIES.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => setCountry(c)}
+                    style={[s.chip, c === country && s.chipActive]}
                   >
-                    {c}
+                    <Text
+                      style={[s.chipText, c === country && s.chipTextActive]}
+                    >
+                      {c}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={s.filterLabel}>Âge minimum</Text>
+            <View style={s.chips}>
+              {AGE_MINS.map((a) => (
+                <Pressable
+                  key={a}
+                  onPress={() => {
+                    if (a <= ageMax) setAgeMin(a);
+                  }}
+                  style={[s.chip, a === ageMin && s.chipActive]}
+                >
+                  <Text style={[s.chipText, a === ageMin && s.chipTextActive]}>
+                    {a}+
                   </Text>
                 </Pressable>
               ))}
             </View>
-          </ScrollView>
-        </View>
 
-        {/* Boutons */}
-        <NeonButton
-          title={searching ? "Recherche..." : "✕  Lancer le match aléatoire"}
-          onPress={match}
-          disabled={searching}
-        />
-        {profile?.isPremium ? (
-          <NeonButton title="Suivant →" onPress={next} variant="outline" />
-        ) : (
-          <Pressable
-            onPress={() => navigation.navigate("Premium" as never)}
-            style={styles.premiumBanner}
+            <Text style={s.filterLabel}>Âge maximum</Text>
+            <View style={s.chips}>
+              {AGE_MAXS.map((a) => (
+                <Pressable
+                  key={a}
+                  onPress={() => {
+                    if (a >= ageMin) setAgeMax(a);
+                  }}
+                  style={[s.chip, a === ageMax && s.chipActive]}
+                >
+                  <Text style={[s.chipText, a === ageMax && s.chipTextActive]}>
+                    {a === 99 ? "∞" : a}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </Animated.View>
+
+          <Animated.View
+            style={[s.searchWrap, { opacity: searchOpacity }]}
+            pointerEvents={searching ? "auto" : "none"}
           >
-            <Text style={styles.premiumText}>
-              ⭐ Passe Premium pour les skips illimités
+            <View style={s.radar}>
+              <Animated.View
+                style={[
+                  s.radarOuter,
+                  { transform: [{ scale: pulse }], opacity: pulseOpacity },
+                ]}
+              />
+              <Animated.View
+                style={[s.radarRing, { transform: [{ rotate: spin }] }]}
+              >
+                <View style={s.radarDot} />
+              </Animated.View>
+              <View style={s.radarCenter}>
+                <Text style={s.radarIcon}>⚡</Text>
+              </View>
+            </View>
+            <Text style={s.searchingTitle}>Recherche en cours{ellipsis}</Text>
+            <Text style={s.searchingSubtitle}>
+              Connexion mondiale · filtres appliqués
             </Text>
-          </Pressable>
+            <Pressable onPress={handleCancel} style={s.cancelBtn}>
+              <Text style={s.cancelText}>Annuler la recherche</Text>
+            </Pressable>
+          </Animated.View>
+        </ScrollView>
+
+        {!searching && (
+          <View style={s.bottom}>
+            <Pressable
+              onPress={handleStart}
+              style={({ pressed }) => [s.matchBtn, pressed && { opacity: 0.9 }]}
+            >
+              <Text style={s.matchIcon}>⚡</Text>
+              <Text style={s.matchText}>TROUVER UN MATCH</Text>
+            </Pressable>
+          </View>
         )}
-      </ScrollView>
+      </SafeAreaView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
-  content: { padding: 20, paddingTop: 54, gap: 20 },
   header: {
+    paddingTop: 54,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.neonRed,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: colors.text, fontWeight: "900", fontSize: 16 },
-  appName: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: "900",
-    letterSpacing: 3,
-  },
-  appX: { color: colors.neonRed },
-  logout: { color: colors.neonRed, fontWeight: "700", fontSize: 14 },
-  logoSection: { alignItems: "center", gap: 14, paddingVertical: 10 },
-  logoBg: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "rgba(232,0,10,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  filtersAround: { flexDirection: "row", gap: 16 },
-  filterBadge: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.4)",
-    backgroundColor: "rgba(232,0,10,0.08)",
-  },
-  filterBadgeText: { color: colors.text, fontWeight: "700", fontSize: 13 },
-  status: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  statusSub: { color: colors.muted, fontSize: 14, textAlign: "center" },
-  section: {
-    gap: 12,
-    backgroundColor: colors.card,
+  headerTitle: { color: colors.text, fontSize: 28, fontWeight: "900" },
+  headerSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
+  profileBtn: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    padding: 16,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileBtnTxt: { fontSize: 22 },
+  scroll: { padding: 20, gap: 20, paddingBottom: 160 },
+  filtersWrap: { gap: 12 },
+  sectionTitle: { color: colors.text, fontSize: 17, fontWeight: "800" },
+  filterLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginTop: 4,
+  },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  sectionTitle: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 2,
+  chipActive: {
+    backgroundColor: "rgba(232,0,10,0.15)",
+    borderColor: colors.neonRed,
   },
-  filterRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  chipText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
+  chipTextActive: { color: colors.neonRed },
+  searchWrap: { alignItems: "center", gap: 22, paddingTop: 40 },
+  radar: {
+    width: 150,
+    height: 150,
     alignItems: "center",
+    justifyContent: "center",
   },
-  filterLabel: { color: colors.text, fontWeight: "600", fontSize: 14 },
-  stepperBtns: { flexDirection: "row", gap: 8 },
-  stepBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
+  radarOuter: {
+    position: "absolute",
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 2,
+    borderColor: `${colors.neonRed}45`,
+    backgroundColor: `${colors.neonRed}08`,
+  },
+  radarRing: {
+    position: "absolute",
+    width: 115,
+    height: 115,
+    borderRadius: 58,
+    borderWidth: 2,
+    borderColor: colors.neonRed,
+    borderStyle: "dashed",
+  },
+  radarDot: {
+    position: "absolute",
+    top: 5,
+    left: "50%",
+    marginLeft: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.neonRed,
+  },
+  radarCenter: {
+    width: 66,
+    height: 66,
+    borderRadius: 20,
     backgroundColor: "rgba(232,0,10,0.15)",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.3)",
+    borderWidth: 2,
+    borderColor: colors.neonRed,
   },
-  stepBtnText: { color: colors.neonRed, fontSize: 18, fontWeight: "900" },
-  chips: { flexDirection: "row", gap: 8 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 6,
+  radarIcon: { fontSize: 28 },
+  searchingTitle: { color: colors.text, fontSize: 18, fontWeight: "900" },
+  searchingSubtitle: { color: colors.muted, fontSize: 13, textAlign: "center" },
+  cancelBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.card,
+    marginTop: 8,
   },
-  chipActive: {
-    borderColor: colors.neonRed,
-    backgroundColor: "rgba(232,0,10,0.1)",
+  cancelText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
+  bottom: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    gap: 10,
+    backgroundColor: colors.black,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
-  chipText: { color: colors.muted, fontWeight: "600", fontSize: 13 },
-  chipTextActive: { color: colors.neonRed },
-  premiumBanner: {
+  matchBtn: {
+    flexDirection: "row",
     alignItems: "center",
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.3)",
-    backgroundColor: "rgba(232,0,10,0.05)",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: colors.neonRed,
+    borderRadius: 16,
+    paddingVertical: 18,
+    shadowColor: colors.neonRed,
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  premiumText: { color: colors.neonRed, fontWeight: "700", fontSize: 13 },
+  matchIcon: { fontSize: 22 },
+  matchText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
 });

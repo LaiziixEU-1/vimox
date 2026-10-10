@@ -1,96 +1,82 @@
-import {
-  ref,
-  uploadBytesResumable,
-  getDownloadURL,
-  deleteObject,
-} from "firebase/storage";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import * as ImagePicker from "expo-image-picker";
-import { storage, db } from "../config/firebase";
+import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
 
-export interface UploadProgress {
-  progress: number;
-  status: "uploading" | "done" | "error";
+// Upload une photo sur Cloudinary
+export async function uploadToCloudinary(
+  localUri: string,
+  folder: string = "profiles",
+): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", {
+    uri: localUri,
+    type: "image/jpeg",
+    name: `upload_${Date.now()}.jpg`,
+  } as any);
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  formData.append("folder", folder);
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: "POST", body: formData },
+  );
+
+  if (!response.ok) throw new Error("Erreur upload Cloudinary");
+  const data = await response.json();
+  return data.secure_url;
 }
 
+// Upload photo de profil
+export async function uploadProfilePhoto(
+  userId: string,
+  localUri: string,
+  onProgress?: (p: { progress: number }) => void,
+): Promise<string> {
+  onProgress?.({ progress: 30 });
+  const url = await uploadToCloudinary(localUri, `profiles/${userId}`);
+  onProgress?.({ progress: 100 });
+  return url;
+}
+
+// Upload photo de chat
+export async function uploadChatPhoto(
+  roomId: string,
+  senderId: string,
+  localUri: string,
+): Promise<string> {
+  return uploadToCloudinary(localUri, `chats/${roomId}`);
+}
+
+// Upload story
+export async function uploadStoryPhoto(
+  userId: string,
+  localUri: string,
+): Promise<string> {
+  return uploadToCloudinary(localUri, `stories/${userId}`);
+}
+
+// Picker galerie
 export async function pickProfileImage(): Promise<string | null> {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== "granted") {
-    throw new Error("Permission refusée pour accéder à la galerie");
-  }
+  if (status !== "granted") throw new Error("Permission galerie refusée");
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
     allowsEditing: true,
     aspect: [1, 1],
-    quality: 0.7,
+    quality: 0.8,
   });
-  if (result.canceled) return null;
+  if (result.canceled || !result.assets[0]) return null;
   return result.assets[0].uri;
 }
 
+// Caméra
 export async function takeProfilePhoto(): Promise<string | null> {
   const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== "granted") {
-    throw new Error("Permission refusée pour accéder à la caméra");
-  }
+  if (status !== "granted") throw new Error("Permission caméra refusée");
   const result = await ImagePicker.launchCameraAsync({
     allowsEditing: true,
     aspect: [1, 1],
-    quality: 0.7,
+    quality: 0.8,
   });
-  if (result.canceled) return null;
+  if (result.canceled || !result.assets[0]) return null;
   return result.assets[0].uri;
-}
-
-export async function uploadProfilePhoto(
-  uid: string,
-  localUri: string,
-  onProgress?: (p: UploadProgress) => void,
-): Promise<string> {
-  const response = await fetch(localUri);
-  const blob = await response.blob();
-
-  const storageRef = ref(storage, `profiles/${uid}/avatar.jpg`);
-
-  return new Promise((resolve, reject) => {
-    const uploadTask = uploadBytesResumable(storageRef, blob, {
-      contentType: "image/jpeg",
-    });
-
-    uploadTask.on(
-      "state_changed",
-      (snapshot) => {
-        const progress = Math.round(
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100,
-        );
-        onProgress?.({ progress, status: "uploading" });
-      },
-      (error) => {
-        onProgress?.({ progress: 0, status: "error" });
-        reject(error);
-      },
-      async () => {
-        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-        await updateDoc(doc(db, "users", uid), {
-          photoURL: downloadURL,
-          updatedAt: serverTimestamp(),
-        });
-        onProgress?.({ progress: 100, status: "done" });
-        resolve(downloadURL);
-      },
-    );
-  });
-}
-
-export async function deleteProfilePhoto(uid: string): Promise<void> {
-  const storageRef = ref(storage, `profiles/${uid}/avatar.jpg`);
-  try {
-    await deleteObject(storageRef);
-    await updateDoc(doc(db, "users", uid), {
-      photoURL: null,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (e: any) {
-    if (e.code !== "storage/object-not-found") throw e;
-  }
 }

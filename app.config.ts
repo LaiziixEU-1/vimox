@@ -17,6 +17,7 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: "com.vimox.app",
+    usesAppleSignIn: true,
     infoPlist: {
       NSCameraUsageDescription:
         "VimoX utilise la caméra pour le chat vidéo et la photo de profil.",
@@ -24,6 +25,8 @@ const config: ExpoConfig = {
         "VimoX utilise le micro pour le chat vidéo.",
       NSPhotoLibraryUsageDescription:
         "VimoX utilise la galerie pour choisir une photo de profil.",
+      NSPhotoLibraryAddUsageDescription:
+        "VimoX a besoin d'enregistrer tes Snaps dans ta galerie.",
     },
   },
   android: {
@@ -34,7 +37,20 @@ const config: ExpoConfig = {
     },
     permissions: ["CAMERA", "RECORD_AUDIO", "READ_MEDIA_IMAGES"],
   },
-  plugins: ["expo-camera", "expo-image-picker"],
+  plugins: [
+    "expo-camera",
+    "expo-image-picker",
+    "expo-apple-authentication",
+    [
+      "expo-media-library",
+      {
+        photosPermission:
+          "VimoX a besoin d'accéder à tes photos pour enregistrer tes Snaps.",
+        savePhotosPermission:
+          "VimoX a besoin d'enregistrer tes Snaps dans ta galerie.",
+      },
+    ],
+  ],
   extra: {
     eas: {
       projectId: "237e6aa7-1c54-438c-8781-a4e404f23ecf",
