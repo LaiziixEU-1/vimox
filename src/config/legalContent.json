@@ -1,0 +1,95 @@
+{
+  "updated": "Dernière mise à jour : octobre 2026",
+  "cgu": [
+    {
+      "title": "1. Éditeur",
+      "body": "VimoX est édité par {{EDITOR}}.\nContact : {{SUPPORT_EMAIL}}"
+    },
+    {
+      "title": "2. Acceptation des conditions",
+      "body": "En utilisant VimoX, tu acceptes les présentes conditions. Si tu ne les acceptes pas, n'utilise pas l'application."
+    },
+    {
+      "title": "3. Le service",
+      "body": "VimoX te permet d'échanger des Vims (photos et vidéos éphémères), de discuter avec tes amis par messages, messages vocaux et appels audio et vidéo, de discuter en groupe (3 à 8 personnes de la même tranche d'âge), de jouer à deux ou contre l'ordinateur et de publier des stories visibles 24 heures. Les adultes (18 ans et plus) peuvent en plus utiliser « Match », qui les met en relation avec d'autres adultes qu'ils ne connaissent pas. Match est inaccessible aux personnes de moins de 18 ans. Dans une conversation, tu peux choisir que les messages s'effacent après lecture ou après 24 heures."
+    },
+    {
+      "title": "4. Âge minimum et compte",
+      "body": "VimoX est réservé aux personnes de 16 ans et plus. La fonction « Match » est réservée aux personnes de 18 ans et plus. Un compte dont le titulaire a moins de 16 ans peut être supprimé. Ton compte est personnel : donne des informations exactes et garde ton mot de passe secret."
+    },
+    {
+      "title": "5. Règles de conduite",
+      "body": "Il est interdit de :\n• partager du contenu illégal, haineux ou violent\n• envoyer des images sexuelles ou de la nudité\n• harceler, menacer ou usurper une identité (y compris par un prénom ou un pseudo trompeur ou offensant)\n• faire du spam, de la publicité ou une arnaque\n• diffuser les coordonnées privées d'une autre personne\n\nToute demande à caractère sexuel envers un mineur est strictement interdite et peut être signalée aux autorités."
+    },
+    {
+      "title": "6. Modération",
+      "body": "• Filtre automatique : les textes que tu écris (messages, réponses aux stories, stories, prénom et bio) sont vérifiés sur ton téléphone avant l'envoi. Un message refusé n'est pas envoyé et son texte n'est pas conservé ; seule la catégorie du refus est enregistrée pour repérer les abus répétés. Ce filtre peut se tromper dans les deux sens : il ne remplace pas les signalements.\n• Signaler : depuis une conversation, une story ou un profil (menu ⋯). L'équipe examine les signalements et peut supprimer un contenu, suspendre ou supprimer un compte.\n• Suspension : plusieurs signalements de personnes différentes, ou des refus répétés du filtre, peuvent entraîner une suspension automatique temporaire (24 heures) le temps d'un examen.\n• Bloquer : une personne bloquée ne peut plus te trouver ni t'écrire ; tu peux débloquer dans Paramètres.\n• Contester : si tu penses qu'une décision est une erreur, écris à l'adresse de contact ; nous réexaminons ta situation."
+    },
+    {
+      "title": "7. Tes contenus",
+      "body": "Tu restes responsable de ce que tu envoies. Tu nous autorises seulement à les héberger et les afficher pour faire fonctionner le service. Une personne qui reçoit un Vim ou voit une story peut en faire une capture d'écran : n'envoie rien que tu ne souhaites pas voir conservé."
+    },
+    {
+      "title": "8. Appels",
+      "body": "Les appels audio et vidéo passent par un service tiers (Jitsi Meet) : VimoX n'enregistre ni le son ni l'image. Les conditions de ce service s'appliquent pendant l'appel."
+    },
+    {
+      "title": "9. Publicité, achats et abonnements",
+      "body": "La version gratuite peut afficher une publicité toutes les 3 personnes passées dans le chat aléatoire. L'abonnement Vim+ supprime la publicité et donne accès à des avantages (liste dans l'application). Des achats à l'unité sont aussi proposés : le Boost (30 minutes de priorité dans les matchs, qui commence dès l'achat) et la restauration d'une flamme éteinte depuis moins de 3 jours. Les prix, la durée et les conditions de renouvellement de l'abonnement sont affichés avant l'achat. Tous les paiements sont gérés par l'App Store ou Google Play ; l'abonnement se résilie depuis les réglages de ton compte. Les achats à l'unité sont utilisés immédiatement et ne sont pas remboursables, sauf selon les règles de l'App Store ou de Google Play. Tant que les paiements ne sont pas activés, Vim+ peut être proposé gratuitement en mode démonstration."
+    },
+    {
+      "title": "10. Responsabilité",
+      "body": "VimoX ne peut pas vérifier l'identité des personnes que tu rencontres et n'est pas responsable des échanges entre utilisateurs. Reste prudent : ne partage jamais d'informations sensibles à un inconnu."
+    },
+    {
+      "title": "11. Suppression du compte",
+      "body": "Tu peux supprimer ton compte à tout moment (Paramètres). Nous pouvons suspendre ou supprimer un compte qui ne respecte pas ces conditions."
+    },
+    {
+      "title": "12. Droit applicable",
+      "body": "{{GOVERNING_LAW}}"
+    },
+    {
+      "title": "13. Contact",
+      "body": "{{SUPPORT_EMAIL}}"
+    }
+  ],
+  "privacy": [
+    {
+      "title": "1. Responsable du traitement",
+      "body": "{{EDITOR}}\nContact données personnelles : {{PRIVACY_EMAIL}}"
+    },
+    {
+      "title": "2. Données collectées",
+      "body": "• Profil : nom, âge, genre, pays, photo (optionnelle), bio, pseudo unique (@, facultatif). Ton e-mail sert à te connecter ; il reste dans le système de connexion et n'est pas affiché aux autres personnes\n• Contenus : messages, messages vocaux, photos, Vims, stories, souvenirs, autocollants, messages épinglés et modifiés\n• Groupes : nom et emoji du groupe, liste des membres, messages, réactions et indication « vu par »\n• Relations : amis, demandes d'amis, personnes bloquées, personnes dont tu as coupé les notifications, flammes\n• Recherche d'amis : si le réglage « Apparaître dans la recherche » est activé (par défaut pour les adultes ; désactivé par défaut pour les moins de 18 ans), ton prénom, ta photo et ton pays (et ton pseudo, si tu en as un) figurent dans un index qui permet aux autres de te trouver par ton prénom ou ton @pseudo et de te voir dans leurs suggestions. Cet index indique seulement si tu es adulte ou non, jamais ton âge exact\n• Utilisation : statut en ligne et dernière connexion (désactivable dans Paramètres), filtres de recherche, parties de jeu\n• Technique : jeton de notifications\n• Sécurité : signalements que tu envoies ou qui te concernent, catégorie des messages refusés par le filtre (jamais leur texte), messages envoyés au support\n• Appels : VimoX n'enregistre aucun appel ; le service Jitsi Meet traite le son et l'image pendant l'appel\n• Rencontres (Match, réservé aux adultes) : la liste des personnes que tu as rencontrées dans le chat aléatoire (visible seulement par toi, pour pouvoir les ajouter en ami ou les signaler après coup)\n• Position : uniquement si tu ajoutes l'autocollant « 📍 lieu » sur une photo ; le nom de la ville est alors écrit sur l'image. VimoX n'enregistre pas ta position\n• Sur ton téléphone uniquement : emojis et sons récents, conversations de groupe déjà lues, réglages d'affichage"
+    },
+    {
+      "title": "3. Pourquoi nous utilisons tes données",
+      "body": "• Faire fonctionner le service que tu utilises : mise en relation, conversations, amis, stories, jeux, appels\n• Assurer la sécurité de la communauté : signalements, filtre, suspension (intérêt légitime)\n• T'envoyer des notifications, si tu les acceptes (réglable dans Paramètres)\n• Traduire un message, uniquement si tu l'actives ou le demandes\n• Te proposer des amis : les personnes que tu as rencontrées en match et, pour les adultes, des personnes du même pays qui ont activé la recherche. Les adultes et les moins de 18 ans ne se trouvent pas entre eux dans la recherche et les suggestions\n\nNous ne faisons pas de publicité ciblée et ne vendons pas tes données."
+    },
+    {
+      "title": "4. Qui reçoit tes données",
+      "body": "Pour faire fonctionner l'application, elles sont traitées par :\n• Google Firebase : connexion et base de données\n• Cloudinary : hébergement des photos, Vims, stories, messages vocaux et musiques\n• Giphy : recherche de GIF et de stickers animés (le texte que tu cherches)\n• Audius : catalogue de musique (les sons que tu cherches et écoutes)\n• MyMemory : traduction d'un message (uniquement si tu l'actives ou le demandes)\n• Expo : envoi des notifications\n• Jitsi Meet : appels audio et vidéo\n• Google AdMob : publicités de la version gratuite (dans l'application installée). Les moins de 18 ans ne reçoivent que des publicités non personnalisées\n• Apple et Google : paiement de l'abonnement Vim+, lorsqu'il sera payant\n\nCertains de ces services peuvent être situés hors de Suisse et de l'Union européenne."
+    },
+    {
+      "title": "5. Durées de conservation",
+      "body": "• Stories : visibles 24 heures, puis effacées\n• Vims : le lien de l'image est effacé de notre base une fois le Vim ouvert\n• Messages : conservés tant que la conversation existe, sauf si les chats éphémères sont activés (effacés après lecture ou après 24 heures, sauf les messages enregistrés)\n• Groupes : messages conservés tant que le groupe existe ; quand tu quittes un groupe ou supprimes ton compte, tu en es retiré\n• Signalements : 12 mois, puis effacés\n• Recherche : ton entrée est supprimée dès que tu désactives le réglage ou que tu supprimes ton compte\n• Pseudo : il redevient disponible dès que tu le retires ou que tu supprimes ton compte\n• Notifications coupées pour un ami : supprimées quand tu remets le son, que tu retires l'ami ou que tu supprimes ton compte\n\nQuand tu supprimes ton compte (Paramètres > Supprimer mon compte), ton profil, tes messages, stories, souvenirs et amis sont supprimés de notre base. Les fichiers hébergés chez Cloudinary ne sont alors plus reliés à ton compte ; tu peux demander leur effacement à l'adresse de contact."
+    },
+    {
+      "title": "6. Tes droits",
+      "body": "Tu peux :\n• accéder à tes données et les corriger, dont ton pseudo (Modifier le profil)\n• télécharger une copie de tes données (Paramètres > Télécharger mes données)\n• supprimer ton compte (Paramètres)\n• choisir de ne pas être trouvé (Paramètres > Confidentialité > Apparaître dans la recherche)\n• t'opposer à un traitement ou limiter son usage : {{PRIVACY_EMAIL}}\n• introduire une réclamation auprès de l'autorité de protection des données de ton pays"
+    },
+    {
+      "title": "7. Mineurs",
+      "body": "VimoX est réservé aux personnes de 16 ans et plus. Si tu penses qu'un compte appartient à une personne plus jeune, signale-le : nous le supprimerons.\nLes comptes de moins de 18 ans n'apparaissent pas dans la recherche par défaut et ne reçoivent pas de suggestions de personnes inconnues.\nMatch, la fonction qui met en relation avec des inconnus, est réservé aux personnes de 18 ans et plus : les comptes de moins de 18 ans n'y ont pas accès. L'âge est celui indiqué à l'inscription."
+    },
+    {
+      "title": "8. Sécurité",
+      "body": "Les échanges avec nos serveurs sont chiffrés (HTTPS). Les stories ne sont visibles que par ton compte et par tes amis au moment de la publication. Aucun service ne peut garantir une sécurité absolue : choisis un mot de passe unique."
+    },
+    {
+      "title": "9. Contact",
+      "body": "{{PRIVACY_EMAIL}}"
+    }
+  ]
+}

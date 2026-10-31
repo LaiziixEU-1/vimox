@@ -1,4 +1,4 @@
-import { Vibration } from "react-native";
+import * as Haptics from "expo-haptics";
 import {
   addDoc,
   arrayUnion,
@@ -16,8 +16,36 @@ import {
 import { db } from "../config/firebase";
 import { ChatMessage } from "../models/types";
 import { isSuspicious } from "./abuse";
-import { saveLocalHistory } from "./localHistory";
+import { clearLocalHistory, saveLocalHistory } from "./localHistory";
+import { toMs } from "./presence";
 import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
+import { logDenied } from "./firestoreErrors";
+
+// Transforme un document Firestore en message affichable. TOUS les champs sont conservés
+// (réponse citée, « modifié », document, position, contact, appel...) : avant, seuls quelques
+// champs passaient et ces messages s'affichaient vides.
+export function mapRoomMessage(id: string, roomId: string, data: any): ChatMessage {
+  return {
+    ...data,
+    id,
+    roomId,
+    senderId: data.senderId,
+    text: data.deleted ? "🚫 Message supprimé" : (data.text ?? ""),
+    imageURL: data.deleted ? null : (data.imageURL ?? null),
+    // nombre (anciens messages), horodatage serveur, ou « en cours d'envoi » (null)
+    sentAt: toMs(data.sentAt) || toMs(data.createdAt) || Date.now(),
+    isAbusive: Boolean(data.isAbusive),
+    readBy: (data.readBy ?? []) as string[],
+    deleted: Boolean(data.deleted),
+    reactions: data.reactions ?? {},
+  } as any;
+}
+
+// Firestore classe les nombres AVANT les horodatages : les anciens messages (sentAt numérique,
+// par exemple les réponses) se retrouvaient tout en haut de la conversation. On retrie par date réelle.
+export function sortMessages(list: ChatMessage[]): ChatMessage[] {
+  return [...list].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
+}
 
 export function listenMessages(
   roomId: string,
@@ -29,32 +57,12 @@ export function listenMessages(
       orderBy("sentAt", "asc"),
     ),
     async (snapshot) => {
-      const messages = snapshot.docs.map((item) => {
-        const data = item.data();
-        return {
-          id: item.id,
-          roomId,
-          senderId: data.senderId,
-          text: data.deleted ? "🚫 Message supprimé" : (data.text ?? ""),
-          imageURL: data.deleted ? null : (data.imageURL ?? null),
-          sentAt:
-            data.sentAt instanceof Timestamp
-              ? data.sentAt.toMillis()
-              : Date.now(),
-          isAbusive: Boolean(data.isAbusive),
-          readBy: (data.readBy ?? []) as string[],
-          deleted: Boolean(data.deleted),
-          reactions: data.reactions ?? {},
-          ...(data.type && { type: data.type }),
-          ...(data.audioUrl && { audioUrl: data.audioUrl }),
-          ...(data.duration && { duration: data.duration }),
-          ...(data.gameId && { gameId: data.gameId }),
-          ...(data.gameType && { gameType: data.gameType }),
-        } as any;
-      });
+      const messages = sortMessages(
+        snapshot.docs.map((item) => mapRoomMessage(item.id, roomId, item.data())),
+      );
       onChange(messages);
-      await saveLocalHistory(roomId, messages);
-    },
+      await saveLocalHistory(roomId, messages).catch(() => {});
+    }, (e) => logDenied("messages du chat aléatoire", e),
   );
 }
 
@@ -70,7 +78,7 @@ export function listenRoom(
       isActive: data?.isActive !== false,
       partnerId: participants.find((id) => id !== currentUserId),
     });
-  });
+  }, (e) => logDenied("état du chat aléatoire", e));
 }
 
 export async function sendMessage(
@@ -92,7 +100,7 @@ export async function sendMessage(
     deleted: false,
     reactions: {},
   });
-  Vibration.vibrate(12);
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 }
 
 // ── FIX : Cloudinary au lieu de Firebase Storage ──────────────────────────────
@@ -135,7 +143,7 @@ export async function sendImageMessage(
     deleted: false,
     reactions: {},
   });
-  Vibration.vibrate(12);
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 }
 
 export async function toggleReaction(
@@ -212,7 +220,7 @@ export function subscribeToTyping(
       ([uid, status]) => uid !== myUid && status === true,
     );
     onTyping(otherTyping);
-  });
+  }, (e) => logDenied("« … écrit » du chat aléatoire", e));
 }
 
 // ── FIX : try/catch pour afficher l'erreur si les règles bloquent ─────────────
@@ -227,4 +235,6 @@ export async function leaveRoom(roomId: string, uid: string): Promise<void> {
     console.error("leaveRoom error:", e);
     // On laisse quand même naviguer en arrière même si ça échoue
   }
+  // La conversation est terminée : on n'en garde aucune copie sur le téléphone
+  clearLocalHistory(roomId).catch(() => {});
 }

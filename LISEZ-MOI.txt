@@ -1,0 +1,32 @@
+VIMOX - MISE A JOUR COMPLETE n10 (remplace les envois precedents) - 121 fichiers verifies + 3 images
+
+==================== INSTALLATION (PowerShell, dans le terminal de VS Code) ====================
+  cd C:\Users\Elif\Desktop\vimox-vscode\vimox-vscode
+  Expand-Archive -Path "$env:USERPROFILE\Downloads\vimox-maj10.zip" -DestinationPath . -Force
+  Remove-Item "src\games\Dessin dev*" -ErrorAction SilentlyContinue
+  Remove-Item src\i18n\index.ts, src\components\AdBanner.tsx, src\config\ads.ts -ErrorAction SilentlyContinue
+  node verif.js          (doit afficher : Fichiers corrects : 121 sur 121 ... TOUT EST BON)
+  npx expo start --clear
+
+Aucun nouveau paquet a installer. L'APPLICATION NE CHANGE PAS dans cette version : elle prepare les etapes PAYANTES.
+
+==================== NOUVEAU : PREPARATION DES ETAPES PAYANTES ====================
+PASSER-AUX-ETAPES-PAYANTES.md  : le guide pas a pas (compte Apple, Expo, TestFlight, fiche App Store, si Apple refuse).
+scripts/push-env-to-eas.mjs     : envoie les reglages de ton .env a Expo. INDISPENSABLE : le fichier .env reste sur ton
+                                  ordinateur ; Expo fabrique l'app sur ses serveurs et ne le recoit pas ; sans cet envoi la
+                                  version publiee n'aurait AUCUNE cle Firebase. Simulation d'abord :
+                                    node scripts/push-env-to-eas.mjs            (n'envoie rien)
+                                    node scripts/push-env-to-eas.mjs --apply    (envoie, apres  npx eas-cli@latest login)
+eas.json                        : chaque profil de fabrication lit maintenant son environnement (production, preview...).
+FICHE-APP-STORE.md              : captures 1320 x 2868 (un seul jeu, pas d'iPad), questionnaire d'age 2026, case " reglages Expo ".
+
+==================== DANS CET ORDRE ====================
+1. Installe, teste avec 2 comptes, publie les regles v2, mets le site legal en ligne (guides precedents).
+2. Lis PASSER-AUX-ETAPES-PAYANTES.md : decide particulier ou societe, puis cree le compte Apple Developer (99 USD/an).
+3. npx eas-cli@latest login, puis le script d'envoi des reglages, puis la premiere fabrication (guide, etape 3).
+
+==================== LIMITES CONNUES ====================
+- Je ne peux pas payer, ni creer tes comptes Apple / Expo, ni lancer les commandes : c'est toi. Le script d'envoi a ete teste
+  avec un FAUX Expo (simulation, envoi, mise a jour, reglage manquant) ; il n'a jamais parle au vrai service.
+- Rien n'a encore tourne sur un vrai iPhone ni avec le vrai App Store. Apple peut refuser la premiere version (risque
+  " rencontres aleatoires " : voir COUTS-ET-COMPTES.md).

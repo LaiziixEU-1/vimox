@@ -3,43 +3,55 @@ import { useState } from "react";
 import {
   Dimensions,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { colors } from "../theme/colors";
+import { LinearGradient } from "expo-linear-gradient";
+import { MATCH_ENABLED } from "../services/ageGate";
 
 export const ONBOARDING_KEY = "vimox:onboarding_done";
 
 const { width } = Dimensions.get("window");
-const SLIDES = [
+const ALL_SLIDES = [
   {
-    icon: "🌐",
-    title: "Match anonyme mondial",
-    desc: "Connecte-toi à des inconnus du monde entier. Aucun profil exposé avant que tu décides.",
-    accent: "#E8000A",
+    icon: "📸",
+    title: "Vims, stories et flammes",
+    desc: "Prends une photo ou une vidéo, ajoute du texte, des autocollants et de la musique, puis envoie-la à tes amis.",
+    accent: "#FF2E4D",
   },
   {
     icon: "💬",
-    title: "Chat · Audio · Vidéo · Jeux",
-    desc: "Texte, messages vocaux, appels vidéo ou parties de jeux. Tout dans une seule app.",
+    title: "Chat · Groupes · Jeux",
+    desc: "Discute en messages ou en vocal, appelle tes amis et joue à 7 jeux, à deux ou contre l'ordinateur.",
     accent: "#0066FF",
   },
   {
     icon: "👥",
-    title: "Amis & Stories",
-    desc: "Ajoute les personnes qui te plaisent et partage ton quotidien via des stories 24h.",
+    title: "Tes amis d'abord",
+    desc: "Ajoute tes amis avec leur pseudo ou un code QR, et partage ton quotidien avec des stories de 24 h.",
     accent: "#8B00FF",
   },
   {
+    icon: "🌐",
+    match: true,
+    title: "Match (18 ans et +)",
+    desc: "Les adultes peuvent aussi faire de nouvelles rencontres avec Match. Tu choisis le pays et l'âge de tes rencontres.",
+    accent: "#FF7A00",
+  },
+  {
     icon: "🛡️",
-    title: "Sécurité totale",
-    desc: "Signalement, blocage, modération. Ta sécurité est notre priorité.",
+    title: "Tu gardes la main",
+    desc: "Signale ou bloque une personne à tout moment, et masque ton statut en ligne dans les paramètres.",
     accent: "#00CC66",
   },
 ];
+
+// Sans Match (interrupteur de secours), la diapositive qui en parle disparaît
+const SLIDES = ALL_SLIDES.filter((sl) => !("match" in sl) || MATCH_ENABLED);
 
 export function OnboardingScreen({ onDone }: { onDone: () => void }) {
   const [idx, setIdx] = useState(0);
@@ -60,6 +72,12 @@ export function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   return (
     <SafeAreaView style={s.root}>
+      {/* Halo de couleur VimoX en haut de l'écran */}
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(255,46,77,0.28)", "rgba(255,107,61,0.10)", "rgba(9,9,12,0)"]}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: 360 }}
+      />
       <ScrollView contentContainerStyle={s.slide}>
         <Text style={s.icon}>{slide.icon}</Text>
         <Text style={[s.title, { color: slide.accent }]}>{slide.title}</Text>

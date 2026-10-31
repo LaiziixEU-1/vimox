@@ -5,18 +5,23 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { colors } from "../theme/colors";
 import { RootStackParamList } from "../models/types";
-import { signInUser, forgotPassword } from "../services/authService";
+import {
+  signInUser,
+  forgotPassword,
+  loginErrorMessage,
+} from "../services/authService";
 import { VimoXLogo } from "../components/VimoXLogo";
+import { LinearGradient } from "expo-linear-gradient";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">;
 
@@ -67,15 +72,7 @@ export function LoginScreen({ navigation }: Props) {
       await signInUser(email.trim(), password);
     } catch (e: any) {
       shake();
-      const msg = e?.message ?? "";
-      Alert.alert(
-        "Connexion impossible",
-        msg.includes("EMAIL_NOT_FOUND") || msg.includes("user-not-found")
-          ? "Aucun compte avec cet email."
-          : msg.includes("INVALID_PASSWORD") || msg.includes("wrong-password")
-            ? "Mot de passe incorrect."
-            : "Vérifie tes identifiants.",
-      );
+      Alert.alert("Connexion impossible", loginErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -104,6 +101,12 @@ export function LoginScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={s.root}>
+      {/* Halo de couleur VimoX en haut de l'écran */}
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(255,46,77,0.28)", "rgba(255,107,61,0.10)", "rgba(9,9,12,0)"]}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: 360 }}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
@@ -114,6 +117,7 @@ export function LoginScreen({ navigation }: Props) {
         >
           <View style={s.logoWrap}>
             <VimoXLogo size={72} />
+            <Text style={s.tagline}>Partage. Joue. Reste en contact.</Text>
           </View>
           <Animated.View
             style={[s.form, { transform: [{ translateX: shakeX }] }]}
@@ -185,7 +189,8 @@ export function LoginScreen({ navigation }: Props) {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
   scroll: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 28 },
-  logoWrap: { alignItems: "center" },
+  logoWrap: { alignItems: "center", gap: 10 },
+  tagline: { color: colors.muted, fontSize: 14, fontWeight: "700", letterSpacing: 0.3 },
   form: { gap: 14 },
   title: { color: colors.text, fontSize: 24, fontWeight: "900" },
   field: { gap: 6 },

@@ -1,86 +1,209 @@
-import React, { useState } from "react";
+/*VIMOX-V32*/
+/*VIMOX-V11*/
+import { useEffect, useRef, useState } from "react";
 import {
-  View,
-  TouchableOpacity,
-  Text,
-  StyleSheet,
+  Animated,
+  Easing,
   Dimensions,
+  Pressable,
   ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { GameDoc, updateGame } from "./gameService";
 import { GameResultModal } from "./GameResultModal";
+import {
+  G,
+  PlayersBar,
+  PopIn,
+  haptic,
+  useFreshCells,
+  usePulse,
+} from "./gameKit";
 
-const { width } = Dimensions.get("window");
-const BOARD_SIZE = Math.min(width - 32, 360);
-const CELL = Math.floor(BOARD_SIZE / 8);
+// ══════ RÈGLES : DAMES (pures, testées) ══════
+// Règles des Dames (sans React ni Firestore) : testables.
+// Pions : 1 = joueur 1, 2 = joueur 2, 3 = dame du joueur 1, 4 = dame du joueur 2.
+// Le joueur 1 monte (vers la ligne 0), le joueur 2 descend. Capture obligatoire.
 
-function toCells(raw: any): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < 64; i++)
-    result.push(Number(raw?.[i] ?? raw?.[String(i)] ?? 0));
-  return result;
-}
-
-interface Move {
+export interface Move {
+  from: number;
   to: number;
   capture?: number;
 }
 
-function getMoves(cells: number[], from: number, piece: number): Move[] {
-  const row = Math.floor(from / 8),
-    col = from % 8;
-  const moves: Move[] = [];
-  const isKing = piece === 3 || piece === 4;
-  const isP1 = piece === 1 || piece === 3;
+export function toCells(raw: any): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < 64; i++) out.push(Number(raw?.[i] ?? raw?.[String(i)] ?? 0));
+  return out;
+}
+
+export const owner = (c: number): 0 | 1 | 2 =>
+  c === 1 || c === 3 ? 1 : c === 2 || c === 4 ? 2 : 0;
+export const isKing = (c: number) => c === 3 || c === 4;
+
+export function movesFrom(cells: number[], from: number): Move[] {
+  const piece = cells[from];
+  const who = owner(piece);
+  if (!who) return [];
+  const row = Math.floor(from / 8);
+  const col = from % 8;
   const dirs: [number, number][] = [];
-  if (isP1 || isKing) dirs.push([-1, -1], [-1, 1]);
-  if (!isP1 || isKing) dirs.push([1, -1], [1, 1]);
+  if (who === 1 || isKing(piece)) dirs.push([-1, -1], [-1, 1]);
+  if (who === 2 || isKing(piece)) dirs.push([1, -1], [1, 1]);
+  const moves: Move[] = [];
   for (const [dr, dc] of dirs) {
-    const r1 = row + dr,
-      c1 = col + dc;
+    const r1 = row + dr;
+    const c1 = col + dc;
     if (r1 < 0 || r1 > 7 || c1 < 0 || c1 > 7) continue;
     const to = r1 * 8 + c1;
     if (cells[to] === 0) {
-      moves.push({ to });
-    } else {
-      const isEnemy = isP1
-        ? cells[to] === 2 || cells[to] === 4
-        : cells[to] === 1 || cells[to] === 3;
-      if (isEnemy) {
-        const r2 = r1 + dr,
-          c2 = c1 + dc;
-        if (
-          r2 >= 0 &&
-          r2 <= 7 &&
-          c2 >= 0 &&
-          c2 <= 7 &&
-          cells[r2 * 8 + c2] === 0
-        )
-          moves.push({ to: r2 * 8 + c2, capture: to });
+      moves.push({ from, to });
+    } else if (owner(cells[to]) !== who) {
+      const r2 = r1 + dr;
+      const c2 = c1 + dc;
+      if (r2 >= 0 && r2 <= 7 && c2 >= 0 && c2 <= 7 && cells[r2 * 8 + c2] === 0) {
+        moves.push({ from, to: r2 * 8 + c2, capture: to });
       }
     }
   }
   return moves;
 }
 
-function getCaptures(
-  cells: number[],
-  piece: number,
-): { from: number; move: Move }[] {
-  const result: { from: number; move: Move }[] = [];
-  for (let i = 0; i < 64; i++) {
-    const p = cells[i];
-    if (p !== piece && p !== piece + 2) continue;
-    getMoves(cells, i, p)
-      .filter((m) => m.capture !== undefined)
-      .forEach((m) => result.push({ from: i, move: m }));
-  }
-  return result;
+// Coups légaux d'un joueur. forcedFrom : pièce qui DOIT continuer sa capture en chaîne.
+export function legalMoves(cells: number[], who: 1 | 2, forcedFrom = -1): Move[] {
+  const origins: number[] = [];
+  if (forcedFrom >= 0) origins.push(forcedFrom);
+  else for (let i = 0; i < 64; i++) if (owner(cells[i]) === who) origins.push(i);
+  const all: Move[] = [];
+  for (const i of origins) all.push(...movesFrom(cells, i));
+  const captures = all.filter((m) => m.capture !== undefined);
+  if (captures.length) return captures;
+  return forcedFrom >= 0 ? [] : all;
 }
 
-function isMineCell(cell: number, myPiece: number): boolean {
-  return cell === myPiece || cell === myPiece + 2;
+export interface Applied {
+  cells: number[];
+  promoted: boolean;
+  chain: boolean; // la même pièce doit capturer encore
+}
+
+export function applyMove(cells: number[], mv: Move): Applied {
+  const nc = [...cells];
+  const piece = nc[mv.from];
+  const who = owner(piece);
+  nc[mv.to] = piece;
+  nc[mv.from] = 0;
+  if (mv.capture !== undefined) nc[mv.capture] = 0;
+  const rowTo = Math.floor(mv.to / 8);
+  let promoted = false;
+  if (!isKing(piece) && ((who === 1 && rowTo === 0) || (who === 2 && rowTo === 7))) {
+    nc[mv.to] = who === 1 ? 3 : 4;
+    promoted = true; // promotion = fin du tour
+  }
+  const chain =
+    mv.capture !== undefined &&
+    !promoted &&
+    movesFrom(nc, mv.to).some((m) => m.capture !== undefined);
+  return { cells: nc, promoted, chain };
+}
+
+// Si le joueur « next » n'a plus de pièce OU plus aucun coup, il perd.
+export function winnerIfBlocked(cells: number[], next: 1 | 2): 0 | 1 | 2 {
+  if (legalMoves(cells, next).length === 0) return next === 1 ? 2 : 1;
+  return 0;
+}
+
+export function countPieces(cells: number[], who: 1 | 2): number {
+  return cells.filter((c) => owner(c) === who).length;
+}
+
+// Nombre de demi-coups sans capture ni promotion avant égalité
+// Règle officielle (dames anglaises 8×8) : 40 coups chacun sans prise ni promotion = nulle
+export const QUIET_LIMIT = 80;
+
+// ══════ ÉCRAN ══════
+const { width } = Dimensions.get("window");
+const BOARD = Math.min(width - 24, 400);
+const CELL = Math.floor(BOARD / 8);
+const PIECE = Math.round(CELL * 0.8);
+
+const LIGHT = "#E8C99B"; // cases claires (bois)
+const DARK = "#8B5A2B"; // cases de jeu (bois foncé)
+
+function Disc({
+  cell,
+  fresh,
+  ring,
+  mustCapture,
+}: {
+  cell: number;
+  fresh: boolean;
+  ring: boolean;
+  mustCapture: boolean;
+}) {
+  const pulse = usePulse(mustCapture);
+  const color = owner(cell) === 1 ? G.p1 : G.p2;
+  return (
+    <PopIn animate={fresh}>
+      <Animated.View
+        style={[
+          s.disc,
+          {
+            width: PIECE,
+            height: PIECE,
+            borderRadius: PIECE / 2,
+            backgroundColor: color,
+          },
+          ring && s.discSelected,
+          mustCapture && {
+            transform: [
+              {
+                scale: pulse.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 1.1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <View style={[s.discRing, { borderRadius: PIECE / 2 }]} />
+        <View style={s.discShine} />
+        {isKing(cell) && (
+          <MaterialCommunityIcons
+            name={"crown" as any}
+            size={Math.round(PIECE * 0.5)}
+            color="rgba(17,17,16,0.78)"
+          />
+        )}
+      </Animated.View>
+    </PopIn>
+  );
+}
+
+// Le pion joué glisse depuis sa case de départ (chez les deux joueurs)
+function Slide({ dx, dy, children }: { dx: number; dy: number; children: React.ReactNode }) {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(v, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, []);
+  return (
+    <Animated.View
+      style={{
+        zIndex: 5,
+        transform: [
+          { translateX: v.interpolate({ inputRange: [0, 1], outputRange: [dx, 0] }) },
+          { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [dy, 0] }) },
+        ],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
 }
 
 interface Props {
@@ -91,265 +214,168 @@ interface Props {
 
 export function Checkers({ game, chatId, myId }: Props) {
   const navigation = useNavigation();
-  const bd = game.board;
+  const bd = game.board ?? {};
   const cells = toCells(bd.cells ?? bd);
+  const forced: number = typeof bd.selected === "number" ? bd.selected : -1;
+  const quiet: number = typeof bd.quiet === "number" ? bd.quiet : 0;
+  const last: { from: number; to: number } | null = bd.last ?? null;
+  const moveId: number = typeof bd.moveId === "number" ? bd.moveId : 0;
+  const myPiece: 1 | 2 = myId === game.player1 ? 1 : 2;
   const isMyTurn = game.currentTurn === myId;
-  const myPiece = myId === game.player1 ? 1 : 2;
   const finished = game.status === "finished";
   const w = game.winner;
   const [sel, setSel] = useState(-1);
-  const mandatoryCaptures = isMyTurn ? getCaptures(cells, myPiece) : [];
-  const mustCapture = mandatoryCaptures.length > 0;
-  const capturableFrom = new Set(mandatoryCaptures.map((c) => c.from));
+  const [busy, setBusy] = useState(false);
+  const fresh = useFreshCells(cells);
 
-  async function press(idx: number) {
-    if (!isMyTurn || finished) return;
-    const piece = cells[idx];
-    const isMine = piece === myPiece || piece === myPiece + 2;
-    if (sel === -1) {
-      if (!isMine) return;
-      if (mustCapture && !capturableFrom.has(idx)) return;
-      setSel(idx);
-      return;
-    }
-    if (isMine) {
-      if (mustCapture && !capturableFrom.has(idx)) return;
-      setSel(idx);
-      return;
-    }
-    const allMoves = getMoves(cells, sel, cells[sel]);
-    const validMoves = mustCapture
-      ? allMoves.filter((m) => m.capture !== undefined)
-      : allMoves;
-    const move = validMoves.find((m) => m.to === idx);
-    if (!move) {
+  // Le plateau est retourné pour le joueur 2 : tes pions sont toujours en bas
+  const flip = myPiece === 2;
+  const idxOf = (r: number, c: number) =>
+    flip ? (7 - r) * 8 + (7 - c) : r * 8 + c;
+
+  const moves: Move[] =
+    isMyTurn && !finished ? legalMoves(cells, myPiece, forced) : [];
+  const movable = new Set(moves.map((m) => m.from));
+  const mustCapture = moves.some((m) => m.capture !== undefined);
+  const active = forced >= 0 && isMyTurn ? forced : sel;
+  const targets = moves.filter((m) => m.from === active);
+  const targetSet = new Map(targets.map((m) => [m.to, m]));
+
+  // Sélection oubliée si ce n'est plus mon tour ou si la pièce ne peut plus bouger
+  useEffect(() => {
+    if (sel >= 0 && (!isMyTurn || !movable.has(sel))) setSel(-1);
+  }, [isMyTurn, game.board]);
+
+  async function play(mv: Move) {
+    if (busy) return;
+    setBusy(true);
+    haptic(mv.capture !== undefined ? "success" : "tap");
+    const a = applyMove(cells, mv);
+    const opp: 1 | 2 = myPiece === 1 ? 2 : 1;
+    const lost = a.chain ? 0 : winnerIfBlocked(a.cells, opp);
+    const nq = mv.capture !== undefined || a.promoted ? 0 : quiet + 1;
+    const drawn = !a.chain && !lost && nq >= QUIET_LIMIT;
+    const over = !!lost || drawn;
+    const next = a.chain ? myId : myPiece === 1 ? game.player2 : game.player1;
+    try {
+      await updateGame(chatId, game.id, {
+        board: { cells: a.cells, selected: a.chain ? mv.to : -1, quiet: nq, last: { from: mv.from, to: mv.to }, moveId: moveId + 1 },
+        currentTurn: over ? game.currentTurn : next,
+        status: over ? "finished" : "playing",
+        winner: lost ? (lost === 1 ? game.player1 : game.player2) : drawn ? "draw" : null,
+      });
       setSel(-1);
-      return;
+    } catch {
+      haptic("error");
+    } finally {
+      setBusy(false);
     }
-    const nc = [...cells];
-    nc[move.to] = nc[sel];
-    nc[sel] = 0;
-    if (move.capture !== undefined) nc[move.capture] = 0;
-    if (myPiece === 1 && Math.floor(move.to / 8) === 0) nc[move.to] = 3;
-    if (myPiece === 2 && Math.floor(move.to / 8) === 7) nc[move.to] = 4;
-    let nextTurn =
-      game.currentTurn === game.player1 ? game.player2 : game.player1;
-    let newSel = -1;
-    if (move.capture !== undefined) {
-      const further = getMoves(nc, move.to, nc[move.to]).filter(
-        (m) => m.capture !== undefined,
-      );
-      if (further.length > 0) {
-        nextTurn = game.currentTurn;
-        newSel = move.to;
-      }
-    }
-    const p1Left = nc.some((c) => c === 1 || c === 3);
-    const p2Left = nc.some((c) => c === 2 || c === 4);
-    const won = !p1Left || !p2Left;
-    await updateGame(chatId, game.id, {
-      board: { cells: nc, selected: newSel },
-      currentTurn: won ? game.currentTurn : nextTurn,
-      status: won ? "finished" : "playing",
-      winner: won ? myId : null,
-    });
-    setSel(newSel);
   }
 
-  const allMoves = sel !== -1 ? getMoves(cells, sel, cells[sel]) : [];
-  const validMoves = mustCapture
-    ? allMoves.filter((m) => m.capture !== undefined)
-    : allMoves;
-  const validTargets = new Set(validMoves.map((m) => m.to));
-  const p1Count = cells.filter((c) => c === 1 || c === 3).length;
-  const p2Count = cells.filter((c) => c === 2 || c === 4).length;
-  const myCount = myPiece === 1 ? p1Count : p2Count;
-  const enCount = myPiece === 1 ? p2Count : p1Count;
-  const myColor = myPiece === 1 ? "#C1121F" : "#F0F0F0";
-  const enColor = myPiece === 1 ? "#F0F0F0" : "#C1121F";
-  const statusColor = finished
-    ? w === myId
-      ? "#28F7A1"
-      : "#FF4444"
-    : isMyTurn
-      ? "#28F7A1"
-      : "#666";
+  function press(i: number) {
+    if (!isMyTurn || finished || busy) return;
+    const mv = targetSet.get(i);
+    if (active >= 0 && mv) {
+      play(mv);
+      return;
+    }
+    if (forced >= 0) return; // chaîne de captures : on ne change pas de pièce
+    if (movable.has(i)) {
+      haptic("select");
+      setSel(i);
+      return;
+    }
+    if (sel >= 0) setSel(-1);
+  }
+
+  const hint = finished
+    ? w === "draw"
+      ? "Égalité"
+      : w === myId
+        ? "Tu as gagné !"
+        : "Ton adversaire a gagné"
+    : !isMyTurn
+      ? "L'adversaire joue…"
+      : forced >= 0
+        ? "Continue ta capture avec le même pion"
+        : mustCapture
+          ? "Capture obligatoire : choisis un pion qui brille"
+          : active >= 0
+            ? "Touche une case verte pour jouer"
+            : "Choisis un pion";
 
   return (
-    <ScrollView contentContainerStyle={s.container}>
-      <View style={[s.statusRow, { borderColor: statusColor + "55" }]}>
-        <Text style={[s.statusTxt, { color: statusColor }]}>
-          {finished
-            ? "Partie terminée"
-            : isMyTurn
-              ? mustCapture
-                ? "🔴 Capture obligatoire !"
-                : sel !== -1
-                  ? "🎯 Choisis une case"
-                  : "Ton tour"
-              : "⏳ Adversaire joue..."}
-        </Text>
-      </View>
+    <ScrollView
+      contentContainerStyle={s.container}
+      showsVerticalScrollIndicator={false}
+    >
+      <PlayersBar
+        game={game}
+        myId={myId}
+        colorP1={G.p1}
+        colorP2={G.p2}
+        scoreP1={countPieces(cells, 1)}
+        scoreP2={countPieces(cells, 2)}
+      />
 
-      <View style={s.scoreRow}>
-        <View style={s.scoreBox}>
+      <View style={[s.board, { width: CELL * 8 + 6, height: CELL * 8 + 6 }]}>
+        {Array.from({ length: 8 }, (_, r) => (
           <View
+            key={r}
             style={[
-              s.scoreDisk,
-              {
-                backgroundColor: myColor,
-                borderColor: myColor === "#F0F0F0" ? "#ccc" : "#8B0000",
-              },
+              s.row,
+              last && Array.from({ length: 8 }, (_, c) => idxOf(r, c)).includes(last.to) && { zIndex: 10, elevation: 10 },
             ]}
-          />
-          <Text style={s.scoreNum}>{myCount}</Text>
-          <Text style={s.scoreLbl}>Toi</Text>
-        </View>
-        <View style={s.scoreCenter}>
-          <Text style={s.scoreVs}>VS</Text>
-          {mustCapture && isMyTurn && (
-            <View style={s.captureBadge}>
-              <Text style={s.captureBadgeTxt}>⚡ Capture !</Text>
-            </View>
-          )}
-        </View>
-        <View style={s.scoreBox}>
-          <View
-            style={[
-              s.scoreDisk,
-              {
-                backgroundColor: enColor,
-                borderColor: enColor === "#F0F0F0" ? "#ccc" : "#8B0000",
-              },
-            ]}
-          />
-          <Text style={s.scoreNum}>{enCount}</Text>
-          <Text style={s.scoreLbl}>Adversaire</Text>
-        </View>
+          >
+            {Array.from({ length: 8 }, (_, c) => {
+              const i = idxOf(r, c);
+              const cell = cells[i];
+              const playable = (Math.floor(i / 8) + (i % 8)) % 2 === 1;
+              const target = targetSet.get(i);
+              const isSel = active === i;
+              const glow = mustCapture && movable.has(i) && active !== i;
+              return (
+                <Pressable
+                  key={c}
+                  onPress={() => press(i)}
+                  disabled={!playable}
+                  style={[
+                    s.cell,
+                    { width: CELL, height: CELL },
+                    { backgroundColor: playable ? DARK : LIGHT },
+                    isSel && s.cellSel,
+                  ]}
+                >
+                  {target && !cell && (
+                    <View
+                      style={[
+                        s.dot,
+                        target.capture !== undefined && s.dotCapture,
+                      ]}
+                    />
+                  )}
+                  {cell !== 0 &&
+                    (last && last.to === i ? (
+                      <Slide
+                        key={moveId}
+                        dx={((flip ? 7 - (last.from % 8) : last.from % 8) - (flip ? 7 - (i % 8) : i % 8)) * CELL}
+                        dy={((flip ? 7 - Math.floor(last.from / 8) : Math.floor(last.from / 8)) - (flip ? 7 - Math.floor(i / 8) : Math.floor(i / 8))) * CELL}
+                      >
+                        <Disc cell={cell} fresh={false} ring={isSel} mustCapture={glow} />
+                      </Slide>
+                    ) : (
+                      <Disc cell={cell} fresh={fresh.has(i)} ring={isSel} mustCapture={glow} />
+                    ))}
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
       </View>
 
-      <View style={[s.boardWrap, { width: BOARD_SIZE + 6 }]}>
-        <View style={s.colLabels}>
-          {["A", "B", "C", "D", "E", "F", "G", "H"].map((l) => (
-            <Text key={l} style={[s.label, { width: CELL }]}>
-              {l}
-            </Text>
-          ))}
-        </View>
-        <View style={s.boardRow}>
-          <View style={s.rowLabels}>
-            {[8, 7, 6, 5, 4, 3, 2, 1].map((n) => (
-              <Text key={n} style={[s.label, { height: CELL }]}>
-                {n}
-              </Text>
-            ))}
-          </View>
-          <View style={[s.board, { width: CELL * 8, height: CELL * 8 }]}>
-            {Array(8)
-              .fill(null)
-              .map((_, row) => (
-                <View key={row} style={s.row}>
-                  {Array(8)
-                    .fill(null)
-                    .map((_, col) => {
-                      const i = row * 8 + col;
-                      const cell = cells[i];
-                      const dark = (row + col) % 2 === 1;
-                      const isSelected = sel === i;
-                      const isTarget = validTargets.has(i);
-                      const isCapture =
-                        validMoves.find((m) => m.to === i)?.capture !==
-                        undefined;
-                      const canSelect =
-                        isMineCell(cell, myPiece) &&
-                        isMyTurn &&
-                        (!mustCapture || capturableFrom.has(i));
-                      return (
-                        <TouchableOpacity
-                          key={col}
-                          style={[
-                            s.cell,
-                            { width: CELL, height: CELL },
-                            { backgroundColor: dark ? "#8B5E3C" : "#F0D9B5" },
-                            isSelected && s.cellSelected,
-                            isTarget && dark && s.cellTarget,
-                            canSelect &&
-                              !isSelected &&
-                              dark && { backgroundColor: "#9B6E4C" },
-                          ]}
-                          onPress={() => press(i)}
-                          activeOpacity={dark ? 0.85 : 1}
-                        >
-                          {isTarget && dark && !cell && (
-                            <View
-                              style={[
-                                s.targetDot,
-                                isCapture && s.targetCapture,
-                              ]}
-                            />
-                          )}
-                          {cell !== 0 && (
-                            <View
-                              style={[
-                                s.piece,
-                                {
-                                  width: CELL - 6,
-                                  height: CELL - 6,
-                                  borderRadius: (CELL - 6) / 2,
-                                },
-                                {
-                                  backgroundColor:
-                                    cell === 1 || cell === 3
-                                      ? "#C1121F"
-                                      : "#F0F0F0",
-                                },
-                                {
-                                  borderColor:
-                                    cell === 1 || cell === 3
-                                      ? "#7a0000"
-                                      : "#999",
-                                },
-                                isSelected && s.pieceSelected,
-                                mustCapture &&
-                                  capturableFrom.has(i) &&
-                                  s.pieceMustCapture,
-                              ]}
-                            >
-                              <View style={s.pieceGlow} />
-                              {(cell === 3 || cell === 4) && (
-                                <Text
-                                  style={[
-                                    s.crown,
-                                    {
-                                      color: cell === 3 ? "#FFD700" : "#C1121F",
-                                    },
-                                  ]}
-                                >
-                                  ♛
-                                </Text>
-                              )}
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                </View>
-              ))}
-          </View>
-        </View>
-      </View>
-
-      {isMyTurn && !finished && (
-        <View style={s.rulesBox}>
-          <Text style={s.rulesTxt}>
-            {sel === -1
-              ? mustCapture
-                ? "⚡ Tu dois capturer !"
-                : "👆 Sélectionne un pion rouge"
-              : `Pion sélectionné — ${validTargets.size} mouvement${validTargets.size > 1 ? "s" : ""}`}
-          </Text>
-        </View>
-      )}
+      <Text style={[s.hint, finished && w === myId && { color: G.win }]}>
+        {hint}
+      </Text>
 
       <GameResultModal
         result={
@@ -362,96 +388,53 @@ export function Checkers({ game, chatId, myId }: Props) {
 }
 
 const s = StyleSheet.create({
-  container: { alignItems: "center", padding: 16, gap: 12 },
-  statusRow: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    width: "100%",
-  },
-  statusTxt: { fontSize: 14, fontWeight: "700", textAlign: "center" },
-  scoreRow: {
-    flexDirection: "row",
+  container: {
     alignItems: "center",
+    gap: 16,
+    paddingVertical: 16,
+    flexGrow: 1,
     justifyContent: "center",
-    gap: 20,
-    width: "100%",
-  },
-  scoreBox: { alignItems: "center", gap: 4 },
-  scoreDisk: { width: 28, height: 28, borderRadius: 14, borderWidth: 3 },
-  scoreNum: { color: "#fff", fontSize: 22, fontWeight: "900" },
-  scoreLbl: {
-    color: "#444",
-    fontSize: 10,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  scoreCenter: { alignItems: "center", gap: 4 },
-  scoreVs: { color: "#333", fontSize: 14, fontWeight: "700" },
-  captureBadge: {
-    backgroundColor: "#E8000A",
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  captureBadgeTxt: { color: "#fff", fontSize: 9, fontWeight: "800" },
-  boardWrap: { alignItems: "flex-end" },
-  colLabels: { flexDirection: "row", marginLeft: 16, marginBottom: 2 },
-  boardRow: { flexDirection: "row" },
-  rowLabels: {
-    justifyContent: "space-around",
-    alignItems: "center",
-    width: 16,
-    marginRight: 2,
-  },
-  label: {
-    color: "#333",
-    fontSize: 9,
-    textAlign: "center",
-    textAlignVertical: "center",
   },
   board: {
     borderWidth: 3,
-    borderColor: "#5D3A1A",
-    borderRadius: 3,
+    borderColor: "#5C3A1E",
+    borderRadius: 14,
     overflow: "hidden",
   },
   row: { flexDirection: "row" },
   cell: { alignItems: "center", justifyContent: "center" },
-  cellSelected: { backgroundColor: "#FFD700" + "88" },
-  cellTarget: { backgroundColor: "#5a3a20" },
-  targetDot: {
-    width: CELL * 0.35,
-    height: CELL * 0.35,
-    borderRadius: CELL * 0.175,
-    backgroundColor: "rgba(40,247,161,0.65)",
-  },
-  targetCapture: { backgroundColor: "rgba(232,0,10,0.7)" },
-  piece: {
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2.5,
-    overflow: "hidden",
-  },
-  pieceSelected: { borderColor: "#FFD700", borderWidth: 3 },
-  pieceMustCapture: { borderColor: "#E8000A", borderWidth: 3 },
-  pieceGlow: {
-    position: "absolute",
-    top: 4,
-    left: 6,
+  cellSel: { backgroundColor: "rgba(255,194,75,0.28)" },
+  dot: {
     width: CELL * 0.3,
-    height: CELL * 0.18,
-    borderRadius: 6,
-    backgroundColor: "rgba(255,255,255,0.35)",
+    height: CELL * 0.3,
+    borderRadius: CELL * 0.15,
+    backgroundColor: "rgba(74,222,128,0.8)",
   },
-  crown: { fontSize: Math.floor(CELL * 0.45), fontWeight: "900" },
-  rulesBox: {
-    backgroundColor: "#0f0f0f",
-    borderRadius: 10,
-    padding: 10,
-    width: "100%",
+  dotCapture: {
+    width: CELL * 0.42,
+    height: CELL * 0.42,
+    borderRadius: CELL * 0.21,
+    backgroundColor: "rgba(255,77,109,0.9)",
   },
-  rulesTxt: { color: "#333", fontSize: 11, textAlign: "center" },
+  disc: { alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  discSelected: { borderWidth: 3, borderColor: G.gold },
+  discRing: {
+    position: "absolute",
+    top: "14%",
+    left: "14%",
+    right: "14%",
+    bottom: "14%",
+    borderWidth: 2.5,
+    borderColor: "rgba(255,255,255,0.22)",
+  },
+  discShine: {
+    position: "absolute",
+    top: "8%",
+    left: "12%",
+    width: "40%",
+    height: "28%",
+    borderRadius: 100,
+    backgroundColor: "rgba(255,255,255,0.28)",
+  },
+  hint: { color: G.muted, fontSize: 14, fontWeight: "700", textAlign: "center", paddingHorizontal: 20 },
 });

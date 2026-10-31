@@ -4,17 +4,22 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { colors } from "../theme/colors";
+import { LinearGradient } from "expo-linear-gradient";
 import { RootStackParamList } from "../models/types";
-import { registerUser } from "../services/authService";
+import { guardText } from "../services/moderationGuard";
+import {
+  registerUser,
+  registrationErrorMessage,
+} from "../services/authService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Register">;
 const COUNTRIES = [
@@ -53,6 +58,14 @@ export function RegistrationScreen({ navigation }: Props) {
       Alert.alert("Erreur", "Prénom trop court.");
       return;
     }
+    const verdict = await guardText(name, {
+      userId: "inscription",
+      where: "register",
+    });
+    if (!verdict.ok) {
+      Alert.alert("Prénom refusé", verdict.message);
+      return;
+    }
     const a = parseInt(age);
     if (isNaN(a) || a < 16) {
       Alert.alert("Erreur", "Âge minimum : 16 ans.");
@@ -81,13 +94,7 @@ export function RegistrationScreen({ navigation }: Props) {
         country,
       });
     } catch (e: any) {
-      const msg = e?.message ?? "";
-      Alert.alert(
-        "Inscription impossible",
-        msg.includes("EMAIL_EXISTS") || msg.includes("email-already-in-use")
-          ? "Cet email est déjà utilisé."
-          : "Vérifie ta connexion et réessaie.",
-      );
+      Alert.alert("Inscription impossible", registrationErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -95,12 +102,18 @@ export function RegistrationScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={s.root}>
+      {/* Halo de couleur VimoX en haut de l'écran */}
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(255,46,77,0.28)", "rgba(255,107,61,0.10)", "rgba(9,9,12,0)"]}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: 360 }}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
         <View style={s.header}>
-          <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Retour" onPress={() => navigation.goBack()} style={s.backBtn}>
             <Text style={s.back}>‹</Text>
           </Pressable>
           <Text style={s.title}>Créer un compte</Text>
@@ -139,6 +152,31 @@ export function RegistrationScreen({ navigation }: Props) {
             secureTextEntry={!showPwd}
             autoCapitalize="none"
           />
+          {password.length > 0 && (() => {
+            // Solidité du mot de passe : longueur, majuscules, chiffres, symboles
+            let score = 0;
+            if (password.length >= 8) score++;
+            if (password.length >= 12) score++;
+            if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
+            if (/\d/.test(password)) score++;
+            if (/[^A-Za-z0-9]/.test(password)) score++;
+            const lvl = password.length < 6 ? 0 : Math.min(4, Math.max(1, score));
+            const LABELS = ["Trop court", "Faible", "Moyen", "Bon", "Très solide"];
+            const COLORS = ["#E5484D", "#E5484D", "#FFB020", "#4ADE80", "#2ECC71"];
+            return (
+              <View style={s.pwdWrap}>
+                <View style={s.pwdBars}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <View key={i} style={[s.pwdBar, { backgroundColor: i <= lvl ? COLORS[lvl] : "rgba(255,255,255,0.12)" }]} />
+                  ))}
+                </View>
+                <Text style={[s.pwdTxt, { color: COLORS[lvl] }]}>
+                  {LABELS[lvl]}
+                  {lvl > 0 && lvl < 3 ? " · ajoute des chiffres, des majuscules ou un symbole" : ""}
+                </Text>
+              </View>
+            );
+          })()}
           <Input
             label="CONFIRMER"
             value={confirm}
@@ -147,6 +185,11 @@ export function RegistrationScreen({ navigation }: Props) {
             secureTextEntry={!showPwd}
             autoCapitalize="none"
           />
+          {confirm.length > 0 && (
+            <Text style={[s.pwdTxt, { color: confirm === password ? "#2ECC71" : "#E5484D", marginTop: -4 }]}>
+              {confirm === password ? "✓ Les mots de passe sont identiques" : "✗ Les mots de passe sont différents"}
+            </Text>
+          )}
           <Pressable onPress={() => setShowPwd((v) => !v)} style={s.showPwd}>
             <Text style={s.showPwdTxt}>
               {showPwd ? "Cacher" : "Afficher"} le mot de passe
@@ -246,6 +289,10 @@ const inp = StyleSheet.create({
   },
 });
 const s = StyleSheet.create({
+  pwdWrap: { gap: 6, marginTop: -4 },
+  pwdBars: { flexDirection: "row", gap: 6 },
+  pwdBar: { flex: 1, height: 4, borderRadius: 2 },
+  pwdTxt: { fontSize: 12, fontWeight: "700" },
   root: { flex: 1, backgroundColor: colors.black },
   header: {
     paddingTop: 20,
@@ -284,7 +331,7 @@ const s = StyleSheet.create({
     borderColor: colors.border,
   },
   chipOn: {
-    backgroundColor: "rgba(232,0,10,0.15)",
+    backgroundColor: "rgba(255,46,77,0.15)",
     borderColor: colors.neonRed,
   },
   chipTxt: { color: colors.muted, fontSize: 13, fontWeight: "600" },

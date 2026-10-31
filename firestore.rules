@@ -1,52 +1,517 @@
 rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RÈGLES DE SÉCURITÉ VIMOX — couvrent TOUTES les collections de l'application
+//
+//  Voir PUBLIER-LES-REGLES.md : la procédure complète, étape par étape, avec retour arrière.
+//
+//  ⚠️  À PUBLIER SEULEMENT APRÈS VÉRIFICATION :
+//    1. Mets à jour l'app, puis connecte-toi (ou active la connexion sécurisée dans
+//       Paramètres > Sécurité).
+//    2. Vérifie que Paramètres > Sécurité affiche « Connexion sécurisée : active »
+//       sur TON téléphone ET sur celui de tes testeurs.
+//    3. Publie ces règles (console Firebase > Firestore > Règles, ou `firebase deploy
+//       --only firestore:rules`). Garde les anciennes règles sous la main : la console
+//       garde l'historique et permet de revenir en arrière en un clic.
+//    4. Teste : inscription, connexion, match, chat, amis, Snap, story, jeu, appel.
+//
+//  Sans connexion sécurisée, ces règles refusent tout (c'est voulu).
+//
+//  Nouveautés (octobre 2026, v17) :
+//    • L'âge est PRIVÉ : il vit dans users/{uid}/private/info (lisible par la personne seule).
+//      Les autres ne le voient qu'en match, dans la conversation (champ « ages », vérifié ici).
+//    • Amis : un adulte et un mineur ne peuvent pas devenir amis (demande refusée).
+//
+//  Nouveautés (octobre 2026) :
+//    • Sécurité des mineurs côté serveur : un 16-17 ans ne peut être mis en relation
+//      qu'avec des 16-17 ans (file d'attente ET création de la conversation vérifiées).
+//    • L'âge ne peut plus être modifié après l'inscription (impossible de changer de tranche).
+//    • Snaps : le destinataire peut aussi effacer vidéo et musique en ouvrant le Snap.
+//    • Sons enregistrés (users/{uid}/savedSounds), compteurs soundUsage et lensUsage.
+// ═══════════════════════════════════════════════════════════════════════════
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function signedIn() {
       return request.auth != null;
     }
-
-    function isSelf(userId) {
-      return signedIn() && request.auth.uid == userId;
+    function me() {
+      return request.auth.uid;
+    }
+    function isSelf(uid) {
+      return signedIn() && me() == uid;
+    }
+    // L'écriture ne touche que ces champs
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Vim+ (abonnement) : le statut « abonné » est écrit UNIQUEMENT par le serveur (fonctions
+    // syncPremium et revenuecatWebhook), après vérification du paiement auprès de RevenueCat.
+    // ⚠️ MODE DÉMO : tant que les paiements ne sont pas lancés, l'app peut encore s'activer Vim+
+    //    gratuitement pour tester. AU LANCEMENT DES PAIEMENTS : remplacer « true » par « false »
+    //    ci-dessous, puis publier ces règles.
+    function premiumDemoAllowed() {
+      return true;
+    }
+    function premiumFields() {
+      return ["isPremium", "premiumUntil", "premiumWillRenew", "premiumStore", "premiumCheckedAt", "premiumActivatedAt",
+              "premiumSince", "vimPassesUsed", "vimPassesYear", "boostUntil", "paidRestores"];
     }
 
-    function validAge() {
-      return request.resource.data.age is int && request.resource.data.age >= 16;
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
+    // ── Âge et tranches (sécurité des mineurs) ─────────────────────────────
+    // L'âge vient TOUJOURS du profil enregistré (verrouillé après l'inscription), jamais de l'app.
+    function privPath(uid) {
+      return /databases/$(database)/documents/users/$(uid)/private/info;
+    }
+    function ageOf(uid) {
+      return exists(privPath(uid))
+        ? get(privPath(uid)).data.age
+        : get(/databases/$(database)/documents/users/$(uid)).data.get("age", 0);
+    }
+    function isMinorUid(uid) {
+      return ageOf(uid) < 18;
+    }
+    function iAmMinor() {
+      return isMinorUid(me());
+    }
+    // Deux personnes de la même tranche d'âge (mineurs ensemble, adultes ensemble)
+    function sameBand(a, b) {
+      return isMinorUid(a) == isMinorUid(b);
+    }
+    // (v29) Groupe : 8 membres au plus, tous de la même tranche d'âge que le créateur
+    function groupSameBand(m) {
+      return (m.size() < 1 || sameBand(me(), m[0])) && (m.size() < 2 || sameBand(me(), m[1])) && (m.size() < 3 || sameBand(me(), m[2])) && (m.size() < 4 || sameBand(me(), m[3])) && (m.size() < 5 || sameBand(me(), m[4])) && (m.size() < 6 || sameBand(me(), m[5])) && (m.size() < 7 || sameBand(me(), m[6])) && (m.size() < 8 || sameBand(me(), m[7]));
+    }
+    // La tranche annoncée (« minor » / « adult ») doit correspondre à mon vrai âge
+    function bandMatchesMe(band) {
+      return band in ["minor", "adult"] && (band == "minor") == iAmMinor();
+    }
+    // (v80) Match (rencontres avec des inconnus) : RÉSERVÉ AUX ADULTES. Un mineur ne peut ni entrer
+    // dans la file d'attente, ni créer un salon de match, même avec une app modifiée.
+    function matchBandAllowed(band) {
+      return band == "adult" && bandMatchesMe(band);
+    }
+
+    // Demande d'ami avant / après l'opération en cours (preuve qu'une amitié a bien été acceptée)
+    function requestBefore(rid) {
+      return get(/databases/$(database)/documents/friendRequests/$(rid)).data;
+    }
+    function requestAfter(rid) {
+      return getAfter(/databases/$(database)/documents/friendRequests/$(rid)).data;
+    }
+    // Un lien d'amitié ne peut être créé QUE par le destinataire d'une demande en attente, dans la
+    // même opération que le passage de cette demande à « accepted ». Impossible de s'imposer comme ami.
+    function validFriendLink(fid) {
+      let rid = request.resource.data.requestId;
+      let req = requestBefore(rid);
+      return rid is string
+        && fid == request.resource.data.userId + "_" + request.resource.data.id
+        && req.status == "pending"
+        && req.toUid == me()
+        && requestAfter(rid).status == "accepted"
+        && ((request.resource.data.userId == req.fromUid && request.resource.data.id == me())
+          || (request.resource.data.userId == me() && request.resource.data.id == req.fromUid));
+    }
+
+    // Ce pseudo a-t-il été réservé par moi (dans la même opération ou avant) ? Empêche de s'attribuer le pseudo
+    // d'une autre personne dans son profil ou dans l'index de recherche.
+    function ownsHandle(h) {
+      return h is string
+        && getAfter(/databases/$(database)/documents/usernames/$(h)).data.uid == me();
+    }
+
+    // Compteur qui ne peut qu'augmenter de 1 à la fois (sons, lenses)
+    function validCounterCreate() {
+      return request.resource.data.keys().hasOnly(["count"]) && request.resource.data.count == 1;
+    }
+    function validCounterUpdate() {
+      return onlyChanges(["count"]) && request.resource.data.count == resource.data.count + 1;
+    }
+
+    // ── Profils ──────────────────────────────────────────────────────────
+    // Lisibles par toute personne connectée (nom, photo, âge, pays, présence).
+    // « suspendedUntil » et « reportCount » sont posés par le serveur (functions/) :
+    // l'utilisateur ne peut ni les créer ni les modifier (impossible de lever sa propre suspension).
+    // L'âge est fixé à l'inscription et ne peut plus être modifié (sécurité des mineurs) :
+    // une correction passe par le support.
+    // Un profil se lit un par un (get) ; la LISTE de tous les profils n'est pas consultable (anti-aspiration).
     match /users/{userId} {
-      allow read: if signedIn();
-      allow create: if isSelf(userId) && validAge();
-      allow update: if isSelf(userId) && (!("age" in request.resource.data) || validAge());
-      allow delete: if false;
-    }
+      allow get: if signedIn();
+      allow list: if false;
+      // L'âge n'est PAS dans le profil public : il est créé en même temps dans private/info
+      allow create: if isSelf(userId)
+        && !("age" in request.resource.data)
+        && existsAfter(privPath(userId))
+        && !("suspendedUntil" in request.resource.data)
+        && !("reportCount" in request.resource.data)
+        && request.resource.data.get("isPremium", false) == false
+        && (!("username" in request.resource.data) || ownsHandle(request.resource.data.username));
+      // L'âge public ne peut qu'être RETIRÉ (migration vers l'espace privé), jamais ajouté ni changé
+      allow update: if isSelf(userId)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(["age"]) || !("age" in request.resource.data))
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["suspendedUntil", "reportCount"])
+        // Vim+ : seul le serveur change le statut d'abonné (sauf mode démo, voir premiumDemoAllowed)
+        && (premiumDemoAllowed() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(premiumFields()))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(["username"])
+          || !("username" in request.resource.data)
+          || ownsHandle(request.resource.data.username));
+      allow delete: if isSelf(userId);
 
-    match /waitingUsers/{userId} {
-      allow read: if signedIn();
-      allow create, update, delete: if isSelf(userId);
-    }
+      // Âge privé : lisible par la personne seule. Créé à l'inscription (âge ≥ 16), ou lors de la
+      // migration d'un ancien compte (doit être EXACTEMENT l'ancien âge public). Jamais modifiable ensuite.
+      match /private/{docId} {
+        allow get: if isSelf(userId) && docId == "info";
+        allow list: if false;
+        allow create: if isSelf(userId)
+          && docId == "info"
+          && request.resource.data.keys().hasOnly(["age", "createdAt"])
+          && request.resource.data.age is int
+          && request.resource.data.age >= 16
+          && request.resource.data.age <= 120
+          && (!exists(/databases/$(database)/documents/users/$(userId))
+            || get(/databases/$(database)/documents/users/$(userId)).data.get("age", -1) == request.resource.data.age);
+        // Réécriture identique autorisée (nouvel essai d'inscription), jamais de changement d'âge
+        allow update: if isSelf(userId) && docId == "info"
+          && request.resource.data.age == resource.data.age
+          && request.resource.data.keys().hasOnly(["age", "createdAt"]);
+        allow delete: if isSelf(userId);
+      }
 
-    match /rooms/{roomId} {
-      allow read: if signedIn() && request.auth.uid in resource.data.participants;
-      allow create: if signedIn() && request.auth.uid in request.resource.data.participants;
-      allow update: if signedIn() && request.auth.uid in resource.data.participants;
-      allow delete: if false;
+      // Achats à l'unité déjà crédités (écrits par le serveur, lisibles par la personne)
+      match /purchases/{txId} {
+        allow read: if isSelf(userId);
+        allow write: if false;
+      }
 
-      match /messages/{messageId} {
-        allow read: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants;
-        allow create: if signedIn()
-          && request.auth.uid == request.resource.data.senderId
-          && request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 700;
-        allow update, delete: if false;
+      // Sons enregistrés (catalogue de musique) : privés
+      match /savedSounds/{soundId} {
+        allow read, delete: if isSelf(userId);
+        allow create, update: if isSelf(userId)
+          && request.resource.data.audioURL is string
+          && request.resource.data.audioURL.size() < 1000;
       }
     }
 
-    match /reports/{reportId} {
-      allow create: if signedIn() && request.auth.uid == request.resource.data.reporterId;
+    // ── Recherche de match ───────────────────────────────────────────────
+    // Ma fiche d'attente annonce ma tranche d'âge : elle DOIT correspondre à mon vrai âge.
+    // Le partenaire qui me réserve ne peut modifier QUE « matchedRoomId », et seulement s'il est
+    // dans la même tranche que moi (un adulte ne peut jamais réserver un mineur, et inversement).
+    // Priorité dans les matchs : Vim+ ou Boost acheté, vérifiés sur le profil (écrit par le serveur)
+    function priorityIsReal() {
+      let me_ = get(/databases/$(database)/documents/users/$(me())).data;
+      return (request.resource.data.get("isPremium", false) == false || me_.get("isPremium", false) == true)
+        && (request.resource.data.get("boosted", false) == false
+          || (me_.get("boostUntil", null) != null && me_.boostUntil > request.time));
+    }
+
+    match /waitingUsers/{userId} {
+      // On ne lit que les personnes de SA tranche d'âge (la requête filtre déjà sur « band »)
+      allow get: if signedIn() && (isSelf(userId) || bandMatchesMe(resource.data.band));
+      allow list: if signedIn() && bandMatchesMe(resource.data.band);
+      allow create: if isSelf(userId) && matchBandAllowed(request.resource.data.band) && priorityIsReal();
+      allow delete: if isSelf(userId);
+      allow update: if (isSelf(userId) && matchBandAllowed(request.resource.data.band) && priorityIsReal())
+        || (signedIn()
+          && !isSelf(userId)
+          && onlyChanges(["matchedRoomId"])
+          && bandMatchesMe(resource.data.band));
+    }
+
+    // Anti-répétition : écrit pour les DEUX personnes par celle qui lance le match.
+    match /matchCooldowns/{id} {
+      allow read, delete: if signedIn() && (resource.data.user == me() || resource.data.partner == me());
+      allow create, update: if signedIn()
+        && (request.resource.data.user == me() || request.resource.data.partner == me());
+    }
+
+    // ── Conversations de match ───────────────────────────────────────────
+    // Création : exactement 2 personnes, dont moi, de la MÊME tranche d'âge (vérifiée sur leurs profils).
+    match /rooms/{roomId} {
+      allow create: if signedIn()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && me() in request.resource.data.participants
+        && matchBandAllowed(request.resource.data.band)
+        && sameBand(request.resource.data.participants[0], request.resource.data.participants[1])
+        // Âges copiés dans la conversation : exactement les vrais âges des deux personnes
+        && request.resource.data.ages is map
+        && request.resource.data.ages.keys().hasOnly(request.resource.data.participants)
+        && request.resource.data.ages[request.resource.data.participants[0]] == ageOf(request.resource.data.participants[0])
+        && request.resource.data.ages[request.resource.data.participants[1]] == ageOf(request.resource.data.participants[1]);
+      allow read: if signedIn() && me() in resource.data.participants;
+      // Impossible d'ajouter ou de retirer quelqu'un, ni de changer la tranche d'une conversation existante
+      allow update: if signedIn() && me() in resource.data.participants
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.get("band", null) == resource.data.get("band", null)
+        && request.resource.data.get("ages", null) == resource.data.get("ages", null);
+      allow delete: if false;
+
+      function isMember() {
+        return signedIn()
+          && me() in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants;
+      }
+
+      match /messages/{messageId} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.senderId == me();
+        // L'auteur modifie son message (édition, suppression douce) ; l'autre personne peut seulement
+        // réagir (reactions), accuser lecture (readBy) ou signaler (reported).
+        allow update: if isMember()
+          && (resource.data.senderId == me() || onlyChanges(["reactions", "readBy", "reported"]));
+        allow delete: if isMember() && resource.data.senderId == me();
+      }
+      match /activity/{uid} {
+        allow read: if isMember();
+        allow write: if isMember() && uid == me();
+      }
+      match /games/{gameId} {
+        allow read, create, update: if isMember();
+      }
+    }
+
+    // ── Conversations entre amis (identifiant = les deux uid triés, séparés par « _ ») ──
+    match /friendChats/{cid} {
+      function inChat() {
+        return signedIn() && (cid.split("_")[0] == me() || cid.split("_")[1] == me());
+      }
+      // (v79) Jeux entre amis : les deux amis lisent et jouent la partie
+      match /games/{gameId} {
+        allow read, create, update: if inChat();
+      }
+      match /messages/{messageId} {
+        allow read: if inChat();
+        allow create: if inChat() && request.resource.data.senderUid == me();
+        // L'auteur modifie son message ; l'autre personne peut réagir (reactions) ou ouvrir un Snap :
+        // « vu » + effacement de l'image, de la vidéo et de la musique du Snap.
+        allow update: if inChat()
+          && (resource.data.senderUid == me()
+            || onlyChanges(["reactions", "snapViewed", "imageURL", "videoURL", "musicURL", "musicMeta", "viewedAt", "saved"]));
+        allow delete: if inChat() && resource.data.senderUid == me();
+      }
+      match /typing/{uid} {
+        allow read: if inChat();
+        allow write: if inChat() && uid == me();
+      }
+      // (v28) Réglage d'effacement des chats, commun aux deux amis
+      match /meta/{docId} {
+        allow read: if inChat();
+        allow create, update: if inChat() && (
+          (docId == "settings"
+            && request.resource.data.keys().hasOnly(["ephemeral", "by", "at"])
+            && request.resource.data.ephemeral in ["off", "viewed", "24h"]
+            && request.resource.data.by == me())
+          // (v50) message épinglé, commun aux deux amis
+          || (docId == "pin"
+            && request.resource.data.keys().hasOnly(["messageId", "text", "by", "at"])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() <= 200
+            && request.resource.data.by == me())
+        );
+        allow delete: if inChat() && docId == "pin";
+      }
+    }
+
+    // ── Groupes (v29) ────────────────────────────────────────────────────
+    // 3 à 8 membres, tous de la même tranche d'âge (vérifié sur leurs profils). Lecture et écriture
+    // réservées aux membres. On peut se retirer soi-même, renommer, et mettre à jour le dernier message.
+    match /groups/{gid} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == me()
+        && request.resource.data.members is list
+        && me() in request.resource.data.members
+        && request.resource.data.members.size() >= 3
+        && request.resource.data.members.size() <= 8
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 30
+        && groupSameBand(request.resource.data.members);
+      allow update: if signedIn() && me() in resource.data.members && (
+        onlyChanges(["lastAt", "lastText", "lastBy"])
+        || (onlyChanges(["name", "emoji"]) && request.resource.data.name is string && request.resource.data.name.size() <= 30)
+        // (v50) message épinglé du groupe (ou retiré)
+        || onlyChanges(["pinned"])
+        || (onlyChanges(["members"]) && request.resource.data.members == resource.data.members.removeAll([me()]))
+      );
+      allow delete: if false;
+
+      function isGroupMember() {
+        return signedIn() && me() in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+      }
+      // (v37) « … écrit » : chacun n'écrit que SON indicateur
+      match /typing/{uid} {
+        allow read: if isGroupMember();
+        allow write: if isGroupMember() && uid == me();
+      }
+      match /messages/{mid} {
+        allow read: if isGroupMember();
+        allow create: if isGroupMember() && request.resource.data.senderUid == me();
+        // L'auteur modifie ou supprime son message (la suppression laisse une petite ligne pour tous).
+        // (v30) Un autre membre peut seulement noter qu'il a vu un Vim (viewedBy, en s'y ajoutant).
+        allow update: if isGroupMember() && (
+          resource.data.senderUid == me()
+          || (onlyChanges(["viewedBy"]) && me() in request.resource.data.viewedBy)
+          // (v36) réagir : chacun ne modifie que SA réaction
+          || (onlyChanges(["reactions"])
+            && request.resource.data.reactions.diff(resource.data.get("reactions", {})).affectedKeys().hasOnly([me()]))
+        );
+        allow delete: if isGroupMember() && resource.data.senderUid == me();
+      }
+    }
+
+    // ── Amis ─────────────────────────────────────────────────────────────
+    // Chaque lien est un document « uidA_uidB » { userId, id, requestId } : il concerne les deux personnes
+    // et ne peut être créé qu'en acceptant une vraie demande (voir validFriendLink).
+    match /friends/{fid} {
+      allow read, delete: if signedIn() && (resource.data.userId == me() || resource.data.id == me());
+      allow create: if signedIn() && validFriendLink(fid)
+        && sameBand(request.resource.data.userId, request.resource.data.id);
+      allow update: if false;
+    }
+
+    match /friendRequests/{id} {
+      allow read, delete: if signedIn() && (resource.data.fromUid == me() || resource.data.toUid == me());
+      // Pas de demande à soi-même, ni à quelqu'un qui nous a bloqué
+      allow create: if signedIn()
+        && request.resource.data.fromUid == me()
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != me()
+        && request.resource.data.status == "pending"
+        // Un adulte et un mineur ne peuvent pas devenir amis
+        && sameBand(me(), request.resource.data.toUid)
+        && !(me() in get(/databases/$(database)/documents/users/$(request.resource.data.toUid)).data.get("blockedUserIds", []));
+      // Seul le destinataire accepte ou refuse, et ne change que le statut
+      allow update: if signedIn()
+        && resource.data.toUid == me()
+        && onlyChanges(["status"])
+        && request.resource.data.status in ["accepted", "declined"];
+    }
+
+    // ── Flammes (identifiant = les deux uid triés) ───────────────────────
+    match /streaks/{cid} {
+      allow get: if signedIn() && (cid.split("_")[0] == me() || cid.split("_")[1] == me());
+      allow list: if signedIn() && me() in resource.data.users;
+      allow create: if signedIn() && me() in request.resource.data.users;
+      allow update, delete: if signedIn() && me() in resource.data.users;
+    }
+
+    // ── Stories ──────────────────────────────────────────────────────────
+    // (v24) « rewatchedBy » : les personnes qui ont revu la story (affiché à l'auteur avec Vim+)
+    // Visibles seulement par leur auteur et par les personnes listées dans « visibleTo » (les amis de
+    // l'auteur au moment de la publication). Une personne de cette liste peut marquer « vu » (viewedBy).
+    match /stories/{id} {
+      allow read: if signedIn() && (resource.data.userId == me() || me() in resource.data.visibleTo);
+      allow create: if signedIn() && request.resource.data.userId == me();
+      allow update: if signedIn()
+        && (resource.data.userId == me()
+          || (onlyChanges(["viewedBy", "rewatchedBy"]) && me() in resource.data.visibleTo));
+      allow delete: if signedIn() && resource.data.userId == me();
+    }
+
+    // ── Compteurs publics (musique et lenses) ────────────────────────────
+    // « X Snaps avec ce son » et « Tendance » des lenses : lisibles par tous, +1 à la fois seulement.
+    match /soundUsage/{soundId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validCounterCreate();
+      allow update: if signedIn() && validCounterUpdate();
+      allow delete: if false;
+    }
+    match /lensUsage/{lensId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validCounterCreate();
+      allow update: if signedIn() && validCounterUpdate();
+      allow delete: if false;
+    }
+
+    // ── Notifications coupées pour un ami ────────────────────────────────
+    // « moi_ami » : seul le propriétaire écrit. Lui ET l'ami concerné peuvent lire : ce sont les téléphones de
+    // l'ami qui envoient les notifications et ils doivent savoir s'ils doivent s'en abstenir. Jamais de liste.
+    match /mutes/{pair} {
+      allow get: if signedIn() && me() in pair.split("_");
+      allow list: if false;
+      allow create, update: if signedIn()
+        && pair == me() + "_" + request.resource.data.muted
+        && request.resource.data.keys().hasOnly(["owner", "muted", "messages", "calls", "createdAt"])
+        && request.resource.data.keys().hasAll(["owner", "muted", "messages", "calls"])
+        && request.resource.data.owner == me()
+        && request.resource.data.muted is string
+        && request.resource.data.messages is bool
+        && request.resource.data.calls is bool;
+      allow delete: if signedIn() && pair.split("_")[0] == me();
+    }
+
+    // ── Pseudos uniques ──────────────────────────────────────────────────
+    // « usernames/<pseudo> » = { uid } : un seul document par pseudo. Créer un pseudo déjà réservé revient à
+    // modifier un document existant, ce qui est refusé : impossible de prendre le pseudo de quelqu'un d'autre.
+    // Format : 3 à 20 caractères, une lettre au début, puis lettres minuscules, chiffres, « . » et « _ ».
+    match /usernames/{handle} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(["uid", "createdAt"])
+        && request.resource.data.uid == me()
+        && handle.matches('^[a-z][a-z0-9._]{2,19}$')
+        && !handle.matches('.*[.][.].*')
+        && !handle.matches('.*[.]$')
+        && !(handle in ["admin", "administrator", "vimox", "support", "moderation", "moderator", "staff", "help", "aide", "contact", "team", "equipe", "officiel", "official", "system", "root", "null", "undefined", "anonymous"]);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == me();
+    }
+
+    // ── Recherche d'amis ─────────────────────────────────────────────────
+    // Index MINIMAL et volontaire : prénom, photo et pays, pour les personnes qui acceptent d'être trouvées.
+    // Chaque personne gère SA propre entrée. Lecture : une entrée à la fois, ou une recherche de 30 résultats
+    // au plus (une requête sans limite est refusée : pas d'aspiration de tout l'index en une fois).
+    match /searchIndex/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 30;
+      allow create, update: if signedIn()
+        && uid == me()
+        && request.resource.data.uid == me()
+        && request.resource.data.keys().hasOnly(["uid", "name", "nameLower", "username", "photo", "country", "adult", "bucket", "updatedAt"])
+        && request.resource.data.keys().hasAll(["uid", "name", "nameLower", "adult", "bucket"])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 40
+        && request.resource.data.nameLower is string && request.resource.data.nameLower.size() <= 40
+        && (!("username" in request.resource.data) || ownsHandle(request.resource.data.username))
+        && request.resource.data.adult is bool
+        // « adulte » doit correspondre au vrai âge du profil (pas de faux mineur dans la recherche)
+        && request.resource.data.adult == !iAmMinor()
+        && request.resource.data.bucket is int && request.resource.data.bucket >= 0 && request.resource.data.bucket < 10;
+      allow delete: if signedIn() && uid == me();
+    }
+
+    // ── Données personnelles ─────────────────────────────────────────────
+    match /memories/{id} {
+      allow read, delete: if signedIn() && resource.data.userId == me();
+      allow create: if signedIn() && request.resource.data.userId == me();
+    }
+    match /customStickers/{id} {
+      allow read, delete: if signedIn() && resource.data.userId == me();
+      allow create: if signedIn() && request.resource.data.userId == me();
+    }
+    // identifiant = « uid_AAAA-MM »
+    match /restoreCredits/{id} {
+      allow get: if signedIn() && id.split("_")[0] == me();
+      allow list, delete: if signedIn() && resource.data.userId == me() && premiumDemoAllowed();
+      // Restaurations Vim+ du mois : comptées par le serveur (useFlameRestore), sauf en mode démo
+      allow create, update: if signedIn() && request.resource.data.userId == me() && premiumDemoAllowed();
+    }
+
+    // ── Signalements et support : on peut écrire, jamais relire ─────────
+    // Les signalements sont effacés automatiquement au bout de 12 mois (politique TTL sur « expireAt »).
+    match /reports/{id} {
+      allow create: if signedIn()
+        && request.resource.data.reporterId == me()
+        && request.resource.data.keys().hasOnly([
+          "type", "reporterId", "reportedId", "kind", "reason", "refId", "chatId",
+          "status", "roomId", "category", "where", "createdAt", "expireAt"
+        ]);
+      allow read, update, delete: if false;
+    }
+    match /supportRequests/{id} {
+      allow create: if signedIn() && request.resource.data.userId == me();
       allow read, update, delete: if false;
     }
   }
 }
-

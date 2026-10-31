@@ -1,5 +1,12 @@
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { isBillingReady } from "./purchaseService";
+
+// Tant qu'aucun paiement réel n'est branché (RevenueCat / StoreKit / Google Play Billing, qui
+// demandent un build natif), le Premium est une DÉMONSTRATION gratuite : l'écran l'indique
+// clairement. Passe cette constante à true quand l'achat intégré sera en place.
+// true seulement dans une version construite avec la clé RevenueCat ET le module d'achat (voir ACTIVER-LES-PAIEMENTS.md)
+export const BILLING_ENABLED = isBillingReady();
 
 // Nombre de skips gratuits par session
 const FREE_SKIPS = 5;

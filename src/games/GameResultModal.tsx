@@ -3,17 +3,19 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { haptic, useGameRuntime } from "./gameKit";
 
 const { width, height } = Dimensions.get("window");
 const CARD_W = Math.min(320, width - 48);
 const CONFETTI_COLORS = [
   "#FFD700",
-  "#E8000A",
+  "#FF2E4D",
   "#28F7A1",
   "#74B9FF",
   "#FF69B4",
@@ -115,9 +117,12 @@ export function GameResultModal({ result, onClose }: Props) {
   const iconScale = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(1)).current;
+  const runtime = useGameRuntime();
 
   useEffect(() => {
     if (!result) return;
+    if (result === "win") haptic("success");
+    else if (result === "lose") haptic("error");
     backdrop.setValue(0);
     cardScale.setValue(0);
     cardRot.setValue(-8);
@@ -192,13 +197,13 @@ export function GameResultModal({ result, onClose }: Props) {
     : isDraw
       ? "Vous êtes à égalité !"
       : "Meilleure chance la prochaine fois !";
-  const cardBg = isWin ? "#1a1200" : isDraw ? "#0d0d1a" : "#1a0000";
-  const accentCol = isWin ? "#FFD700" : isDraw ? "#74B9FF" : "#E8000A";
+  const cardBg = isWin ? "#1a1200" : isDraw ? "#0d0d1a" : "#1c1013";
+  const accentCol = isWin ? "#FFD700" : isDraw ? "#74B9FF" : "#FF4D6D";
   const glowCol = isWin
     ? "rgba(255,215,0,0.22)"
     : isDraw
       ? "rgba(116,185,255,0.15)"
-      : "rgba(232,0,10,0.18)";
+      : "rgba(255,77,109,0.18)";
 
   const shimmerX = shimmer.interpolate({
     inputRange: [0, 1],
@@ -206,6 +211,13 @@ export function GameResultModal({ result, onClose }: Props) {
   });
 
   return (
+    <Modal
+      transparent
+      visible
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Confetti active={isWin} />
       <Animated.View style={[s.backdrop, { opacity: backdrop }]}>
@@ -266,19 +278,49 @@ export function GameResultModal({ result, onClose }: Props) {
           <Text style={s.subtitle}>{subtitle}</Text>
           <View style={[s.divider, { backgroundColor: accentCol + "33" }]} />
 
-          <TouchableOpacity
-            style={[s.btn, { backgroundColor: accentCol }]}
-            onPress={onClose}
-            activeOpacity={0.85}
-          >
-            <View style={s.btnShine} />
-            <Text style={[s.btnTxt, { color: isWin ? "#000" : "#fff" }]}>
-              {isWin ? "🎉 Super !" : isDraw ? "👍 OK !" : "💪 Réessayer"}
-            </Text>
-          </TouchableOpacity>
+          {runtime ? (
+            <View style={s.btnCol}>
+              <TouchableOpacity
+                style={[
+                  s.btn,
+                  {
+                    backgroundColor: accentCol,
+                    opacity: runtime.rematching ? 0.6 : 1,
+                  },
+                ]}
+                onPress={runtime.rematch}
+                disabled={runtime.rematching}
+                activeOpacity={0.85}
+              >
+                <View style={s.btnShine} />
+                <Text style={[s.btnTxt, { color: isWin ? "#000" : "#fff" }]}>
+                  {runtime.rematching ? "Un instant…" : "Revanche"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.btnGhost}
+                onPress={onClose}
+                activeOpacity={0.7}
+              >
+                <Text style={s.btnGhostTxt}>Quitter</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[s.btn, { backgroundColor: accentCol }]}
+              onPress={onClose}
+              activeOpacity={0.85}
+            >
+              <View style={s.btnShine} />
+              <Text style={[s.btnTxt, { color: isWin ? "#000" : "#fff" }]}>
+                {isWin ? "Super !" : isDraw ? "OK !" : "Réessayer"}
+              </Text>
+            </TouchableOpacity>
+          )}
         </Animated.View>
       </Animated.View>
     </View>
+    </Modal>
   );
 }
 
@@ -363,4 +405,7 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.15)",
   },
   btnTxt: { fontSize: 16, fontWeight: "900", letterSpacing: 0.5 },
+  btnCol: { width: "100%", gap: 4 },
+  btnGhost: { width: "100%", paddingVertical: 12, alignItems: "center" },
+  btnGhostTxt: { color: "#9B9BAA", fontSize: 14, fontWeight: "700" },
 });

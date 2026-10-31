@@ -1,9 +1,17 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NeonButton } from "../components/NeonButton";
 import { colors } from "../theme/colors";
+import { LegalDocument } from "./LegalScreen";
 
 export const CONSENT_KEY = "vimox_consent_v1";
 
@@ -13,6 +21,8 @@ interface Props {
 
 export function ConsentScreen({ onAccept }: Props) {
   const [accepted, setAccepted] = useState(false);
+  // Les textes doivent pouvoir être lus AVANT d'accepter
+  const [reading, setReading] = useState<null | "cgu" | "privacy">(null);
 
   async function handleAccept() {
     await AsyncStorage.setItem(CONSENT_KEY, "true");
@@ -31,20 +41,20 @@ export function ConsentScreen({ onAccept }: Props) {
         </Text>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>🍪 Cookies & données</Text>
+          <Text style={styles.cardTitle}>📱 Sur ton téléphone</Text>
           <Text style={styles.cardText}>
-            VimoX utilise des cookies techniques nécessaires au bon
-            fonctionnement de l'application. Nous ne collectons aucune donnée
-            publicitaire.
+            VimoX garde sur ton téléphone ta session et tes préférences pour
+            fonctionner. Aucune donnée publicitaire n'est collectée.
           </Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>🔒 Tes données</Text>
           <Text style={styles.cardText}>
-            Nous collectons uniquement les données nécessaires : nom, âge,
-            genre, pays et email. Tu peux supprimer ton compte et toutes tes
-            données à tout moment.
+            Nous collectons ton profil (nom, âge, genre, pays, email, photo), tes
+            messages et contenus, tes amis et ton statut en ligne. Ils sont
+            traités par Google Firebase, Cloudinary, Giphy, Expo et Jitsi. Tu
+            peux supprimer ton compte et tes données à tout moment.
           </Text>
         </View>
 
@@ -65,8 +75,13 @@ export function ConsentScreen({ onAccept }: Props) {
           </View>
           <Text style={styles.checkText}>
             J'accepte les{" "}
-            <Text style={styles.link}>Conditions d'utilisation</Text> et la{" "}
-            <Text style={styles.link}>Politique de confidentialité</Text>
+            <Text style={styles.link} onPress={() => setReading("cgu")}>
+              Conditions d'utilisation
+            </Text>{" "}
+            et la{" "}
+            <Text style={styles.link} onPress={() => setReading("privacy")}>
+              Politique de confidentialité
+            </Text>
           </Text>
         </Pressable>
 
@@ -76,11 +91,45 @@ export function ConsentScreen({ onAccept }: Props) {
           disabled={!accepted}
         />
       </ScrollView>
+      <Modal
+        visible={reading !== null}
+        animationType="slide"
+        onRequestClose={() => setReading(null)}
+      >
+        <View style={styles.legalRoot}>
+          <View style={styles.legalHeader}>
+            <Text style={styles.legalTitle}>
+              {reading === "cgu"
+                ? "Conditions d'utilisation"
+                : "Politique de confidentialité"}
+            </Text>
+            <Pressable onPress={() => setReading(null)} hitSlop={10}>
+              <Text style={styles.legalClose}>Fermer</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+            {reading && <LegalDocument type={reading} />}
+          </ScrollView>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  legalRoot: { flex: 1, backgroundColor: colors.black },
+  legalHeader: {
+    paddingTop: 54,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.border,
+  },
+  legalTitle: { color: colors.text, fontSize: 17, fontWeight: "800", flex: 1 },
+  legalClose: { color: colors.neonBlue, fontWeight: "800", fontSize: 15 },
   root: { flex: 1 },
   content: { padding: 24, paddingTop: 80, gap: 20 },
   title: {

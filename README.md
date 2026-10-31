@@ -1,117 +1,61 @@
-# VimoX - App mobile iOS/Android dans VS Code
+# VimoX
 
-VimoX est une base complète React Native + Expo + TypeScript pour une plateforme de chat anonyme texte + vidéo avec style cyber neon.
+Application mobile (iOS / Android) de rencontres et de discussion : match avec des inconnus,
+chat, Vims, stories, amis, jeux à deux, appels audio/vidéo.
 
-## Langages et outils
-
-- TypeScript / TSX
-- React Native
-- Expo
-- Firebase Auth
-- Firebase Firestore
-- Firebase Storage
-- VS Code
+**Technologies** : React Native, Expo SDK 57, TypeScript, Firebase (Firestore + Auth), Cloudinary (médias).
 
 ## Installation
 
-Ouvre le dossier `vimox-vscode` dans VS Code, puis lance :
-
 ```bash
 npm install
-npm start
+npm install dotenv
+npx expo install react-native-webview   # appels audio/vidéo
+cp .env.example .env                    # puis remplis les valeurs
+npx expo start --clear
 ```
 
-Si le QR code du terminal ne se scanne pas, ouvre Expo Go sur ton téléphone et entre manuellement l'URL affichée, par exemple `exp://192.168.x.x:8081`.
+Teste avec **Expo Go** : le téléphone et l'ordinateur doivent être connectés au même compte Expo.
 
-Si ton téléphone n'est pas sur le même Wi-Fi que le PC :
+## Configuration indispensable
 
-```bash
-npm run start:tunnel
+- **Firebase** : crée un projet, active Firestore et l'authentification par email/mot de passe,
+  puis remplis les variables `EXPO_PUBLIC_FIREBASE_*` du `.env`.
+- **Cloudinary** : les photos, Vims, stories, messages vocaux et musiques sont envoyés avec un
+  *Upload Preset* **non signé** (Settings > Upload > Upload presets > Signing mode = Unsigned).
+  Le nom du compte et du preset se règlent dans `src/config/env.ts`.
+- **Giphy** : clé `EXPO_PUBLIC_GIPHY_API_KEY` pour la recherche de GIF.
+
+## Sécurité de la base de données
+
+Le fichier `firestore.rules` couvre toutes les collections. **Ne le publie qu'après avoir vérifié**
+que `Paramètres > Sécurité` affiche « Connexion sécurisée : active » sur chaque téléphone de test
+(sinon l'app ne pourra plus lire ni écrire). Procédure détaillée en tête du fichier.
+
+## Appels audio/vidéo
+
+Salle Jitsi Meet affichée dans une WebView. Le serveur se change dans `src/services/videoService.ts`
+(`CALL_SERVER`). Nécessite `react-native-webview`.
+
+## Structure
+
+```
+src/screens      écrans (caméra, chats, amis, profil, réglages, stories...)
+src/games        jeux à deux (+ règles testables : gameLogic, checkersLogic, battleshipLogic)
+src/services     logique métier (match, amis, snaps, stories, authentification...)
+src/components   composants partagés
+src/navigation   navigation (pager caméra / amis / stories / profil)
+src/utils        petits utilitaires (liens de profil)
 ```
 
-Crée aussi ton fichier `.env` depuis le modèle :
+## Limites connues
 
-```bash
-copy .env.example .env
-```
+- Premium : démonstration gratuite (`BILLING_ENABLED` dans `premiumService.ts`) ; un vrai paiement
+  demande un build natif (RevenueCat / StoreKit / Play Billing).
+- Les liens `vimox://` ne s'ouvrent que dans une version installée (pas dans Expo Go).
+- Pas de modération automatique du contenu : seulement signalement et blocage.
+- Lenses AR, double caméra, découpe automatique par IA : impossibles dans Expo Go.
 
-Puis remplis les valeurs Firebase et AdMob dans `.env`.
+## Scripts
 
-Pour tester sur iPhone :
-
-- Avec Expo Go : scanne le QR code affiché par `npm start`.
-- Pour WebRTC natif ou Agora : installe le SDK choisi ensuite et utilise un development build Expo/EAS, car Expo Go ne charge pas tous les modules natifs.
-
-## Configuration Firebase
-
-La configuration Firebase est lue depuis `.env`, pas directement dans le code.
-
-Active ensuite dans Firebase Console :
-
-- Authentication avec email/password
-- Firestore Database
-- Storage
-
-## Collections Firestore utilisées
-
-- `users`
-- `waitingUsers`
-- `rooms`
-- `rooms/{roomId}/messages`
-- `reports`
-
-## Fonctionnalités incluses
-
-- Inscription : nom, âge minimum 16 ans, email, mot de passe, genre, pays, photo.
-- Firebase Auth + profil Firestore + photo Storage.
-- Matching aléatoire avec filtres âge, genre, pays.
-- Bouton Suivant.
-- Chat temps réel Firestore.
-- Messages Unicode avec emojis iOS.
-- Barre de suggestions emojis.
-- Historique local via AsyncStorage.
-- Signalement et blocage.
-- Design sombre cyber neon rouge/bleu/noir.
-- Écran vidéo avec caméra/micro ON-OFF, switch texte/vidéo et effets premium visuels.
-- Emplacement AdMob/Premium prêt à brancher.
-
-## Important pour Expo Go
-
-La version actuelle est optimisée pour démarrer dans Expo Go. L'écran vidéo est prêt côté interface et logique de session, mais le vrai flux WebRTC/Agora doit être ajouté dans un development build EAS, car Expo Go ne charge pas les modules natifs vidéo externes.
-
-## Build iOS App Store
-
-Depuis Windows, le plus simple est EAS Build :
-
-```bash
-npm install -g eas-cli
-eas login
-eas build:configure
-eas build -p ios
-```
-
-Pour publier App Store, il faudra un compte Apple Developer.
-
-## Déploiement Firebase
-
-Les règles sont incluses :
-
-- `firestore.rules`
-- `storage.rules`
-- `firestore.indexes.json`
-
-Après installation de Firebase CLI :
-
-```bash
-firebase login
-firebase use TON_PROJECT_ID
-firebase deploy --only firestore,storage
-```
-
-## À brancher pour production
-
-- Ajouter Agora SDK ou configurer `react-native-webrtc` dans un development build.
-- Remplacer l'emplacement AdMob par `react-native-google-mobile-ads`.
-- Ajouter règles Firestore/Storage strictes.
-- Ajouter Cloud Functions pour matching atomique très haute charge.
-- Ajouter modération avancée côté serveur.
+`scripts/generate-vimox-assets.js` génère les icônes (`node scripts/generate-vimox-assets.js`).

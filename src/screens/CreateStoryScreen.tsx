@@ -17,8 +17,11 @@ import {
   useCameraPermissions,
 } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
+import { guardText } from "../services/moderationGuard";
 import { useAuth } from "../services/AuthContext";
 import { createPhotoStory, createTextStory } from "../services/storyService";
+import { pagerBus } from "../navigation/pagerBus";
+import { SNAP_CAMERA_PROPS, cameraFillStyle } from "../utils/cameraFormat";
 
 const { width } = Dimensions.get("window");
 const PREVIEW_H = width * 1.4;
@@ -35,7 +38,7 @@ const FILTERS = [
 ];
 
 const BG_COLORS = [
-  "#E8000A",
+  "#FF2E4D",
   "#1a1a2e",
   "#0d3b66",
   "#1b4332",
@@ -84,7 +87,14 @@ export function CreateStoryScreen({ onClose }: Props) {
     return true;
   }
 
-  async function openCamera() {
+  // La caméra des stories est la caméra VimoX : filtres, musique,
+  // texte, dessin, vidéo… (elle publie directement dans ta story)
+  function openCamera() {
+    onClose();
+    setTimeout(() => pagerBus.go("Camera"), 250);
+  }
+
+  async function openBasicCamera() {
     if (!permission?.granted) {
       const { granted } = await requestPermission();
       if (!granted) {
@@ -118,7 +128,7 @@ export function CreateStoryScreen({ onClose }: Props) {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       allowsEditing: true,
       aspect: [9, 16],
       quality: 0.85,
@@ -131,6 +141,16 @@ export function CreateStoryScreen({ onClose }: Props) {
 
   async function publishPhoto() {
     if (!req() || !capturedUri) return;
+    if (overlayText.trim()) {
+      const verdict = await guardText(overlayText, {
+        userId: profile!.id,
+        where: "story",
+      });
+      if (!verdict.ok) {
+        Alert.alert("Story non publiée", verdict.message);
+        return;
+      }
+    }
     try {
       setLoading(true);
       await createPhotoStory(
@@ -144,12 +164,10 @@ export function CreateStoryScreen({ onClose }: Props) {
       );
       onClose();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("publishPhoto:", e);
       Alert.alert(
-        "Erreur",
-        msg.includes("Unsigned") || msg.includes("Cloudinary")
-          ? "Va sur console.cloudinary.com → Settings → Upload Presets → Signing Mode = Unsigned"
-          : msg,
+        "Story non publiée",
+        "Impossible de publier ta story pour le moment. Vérifie ta connexion et réessaie.",
       );
     } finally {
       setLoading(false);
@@ -160,6 +178,14 @@ export function CreateStoryScreen({ onClose }: Props) {
     if (!req()) return;
     if (!storyText.trim()) {
       Alert.alert("Erreur", "Écris quelque chose !");
+      return;
+    }
+    const verdict = await guardText(storyText, {
+      userId: profile!.id,
+      where: "story",
+    });
+    if (!verdict.ok) {
+      Alert.alert("Story non publiée", verdict.message);
       return;
     }
     try {
@@ -188,7 +214,7 @@ export function CreateStoryScreen({ onClose }: Props) {
     return (
       <View style={s.root}>
         <View style={s.hdr}>
-          <Pressable onPress={onClose} style={s.xBtn}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Fermer" onPress={onClose} style={s.xBtn}>
             <Text style={s.xTxt}>✕</Text>
           </Pressable>
           <Text style={s.hdrTitle}>Nouvelle story</Text>
@@ -196,12 +222,12 @@ export function CreateStoryScreen({ onClose }: Props) {
         </View>
         <View style={s.choices}>
           <Pressable
-            style={[s.choice, { borderColor: "#E8000A44" }]}
+            style={[s.choice, { borderColor: "#FF2E4D44" }]}
             onPress={openCamera}
           >
             <Text style={s.choiceIco}>📸</Text>
             <Text style={s.choiceLbl}>Caméra</Text>
-            <Text style={s.choiceSub}>Filtres & effets Snap</Text>
+            <Text style={s.choiceSub}>Filtres, musique, vidéo, texte…</Text>
           </Pressable>
           <Pressable style={s.choice} onPress={pickGallery}>
             <Text style={s.choiceIco}>🖼️</Text>
@@ -221,7 +247,8 @@ export function CreateStoryScreen({ onClose }: Props) {
   if (mode === "camera")
     return (
       <View style={s.root}>
-        <CameraView ref={camRef} style={s.cam} facing={facing} flash={flash}>
+        <View style={[s.cam, { overflow: "hidden" }]}>
+          <CameraView ref={camRef} style={cameraFillStyle()} facing={facing} flash={flash} {...SNAP_CAMERA_PROPS} />
           {/* Filter color overlay */}
           {filter.id !== "none" && (
             <View
@@ -234,7 +261,7 @@ export function CreateStoryScreen({ onClose }: Props) {
 
           {/* Top controls */}
           <View style={s.camTop}>
-            <Pressable onPress={() => setMode("choose")} style={s.camCtrl}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Fermer" onPress={() => setMode("choose")} style={s.camCtrl}>
               <Text style={s.camCtrlTxt}>✕</Text>
             </Pressable>
             <Pressable
@@ -243,7 +270,7 @@ export function CreateStoryScreen({ onClose }: Props) {
             >
               <Text style={s.camCtrlTxt}>{flash === "on" ? "⚡" : "🔦"}</Text>
             </Pressable>
-            <Pressable
+            <Pressable accessibilityRole="button" accessibilityLabel="Changer de caméra"
               onPress={() =>
                 setFacing((f) => (f === "back" ? "front" : "back"))
               }
@@ -290,7 +317,7 @@ export function CreateStoryScreen({ onClose }: Props) {
               <View style={s.shutterInner} />
             </Pressable>
           </View>
-        </CameraView>
+        </View>
       </View>
     );
 
@@ -299,7 +326,7 @@ export function CreateStoryScreen({ onClose }: Props) {
     return (
       <View style={s.root}>
         <View style={s.hdr}>
-          <Pressable
+          <Pressable accessibilityRole="button" accessibilityLabel="Retour"
             onPress={() => {
               setCapturedUri(null);
               setMode("choose");
@@ -416,7 +443,7 @@ export function CreateStoryScreen({ onClose }: Props) {
   return (
     <View style={s.root}>
       <View style={s.hdr}>
-        <Pressable onPress={() => setMode("choose")} style={s.xBtn}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Retour" onPress={() => setMode("choose")} style={s.xBtn}>
           <Text style={s.xTxt}>‹</Text>
         </Pressable>
         <Text style={s.hdrTitle}>Story texte</Text>
@@ -513,12 +540,12 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  xTxt: { color: "#E8000A", fontSize: 18, fontWeight: "700" },
+  xTxt: { color: "#FF2E4D", fontSize: 18, fontWeight: "700" },
   hdrTitle: { color: "#fff", fontSize: 17, fontWeight: "800" },
 
   choices: { flex: 1, padding: 20, gap: 14, justifyContent: "center" },
   choice: {
-    backgroundColor: "#0a0a0a",
+    backgroundColor: "#09090C",
     borderWidth: 1,
     borderColor: "#1a1a1a",
     borderRadius: 20,
@@ -531,7 +558,7 @@ const s = StyleSheet.create({
   choiceSub: { color: "#444", fontSize: 12 },
 
   cam: { flex: 1 },
-  filterOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
+  filterOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 },
   camTop: {
     position: "absolute",
     top: 54,
@@ -572,7 +599,7 @@ const s = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: "rgba(0,0,0,0.55)",
   },
-  filterPillOn: { backgroundColor: "rgba(232,0,10,0.85)" },
+  filterPillOn: { backgroundColor: "rgba(255,46,77,0.85)" },
   filterDot: { width: 26, height: 26, borderRadius: 13 },
   filterName: { color: "#aaa", fontSize: 9, fontWeight: "700" },
   shutter: {
@@ -648,7 +675,7 @@ const s = StyleSheet.create({
   },
   textPrevTxt: { fontSize: 22, fontWeight: "800", textAlign: "center" },
   textInput: {
-    backgroundColor: "#0a0a0a",
+    backgroundColor: "#09090C",
     borderWidth: 1,
     borderColor: "#1a1a1a",
     borderRadius: 14,
@@ -660,7 +687,7 @@ const s = StyleSheet.create({
   },
   charCount: { color: "#333", fontSize: 11, textAlign: "right" },
   pubBtn: {
-    backgroundColor: "#E8000A",
+    backgroundColor: "#FF2E4D",
     borderRadius: 16,
     padding: 17,
     alignItems: "center",

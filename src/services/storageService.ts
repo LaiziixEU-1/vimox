@@ -20,9 +20,11 @@ export async function uploadToCloudinary(
     { method: "POST", body: formData },
   );
 
-  if (!response.ok) throw new Error("Erreur upload Cloudinary");
-  const data = await response.json();
-  return data.secure_url;
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.secure_url) {
+    throw new Error(data?.error?.message ?? "Erreur upload Cloudinary");
+  }
+  return data.secure_url as string;
 }
 
 // Upload photo de profil
@@ -59,7 +61,7 @@ export async function pickProfileImage(): Promise<string | null> {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (status !== "granted") throw new Error("Permission galerie refusée");
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: ["images"] as any,
     allowsEditing: true,
     aspect: [1, 1],
     quality: 0.8,
@@ -79,4 +81,27 @@ export async function takeProfilePhoto(): Promise<string | null> {
   });
   if (result.canceled || !result.assets[0]) return null;
   return result.assets[0].uri;
+}
+
+// Message vocal : envoyé sur Cloudinary (type « video » = audio aussi) puis référencé par son lien.
+// Avant, le son entier était encodé en base64 DANS le message Firestore (jusqu'à ~600 Ko par message,
+// retéléchargé à chaque mise à jour de la conversation).
+export async function uploadAudioFile(localUri: string, folder: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", {
+    uri: localUri,
+    type: "audio/m4a",
+    name: `voice_${Date.now()}.m4a`,
+  } as any);
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  formData.append("folder", folder);
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`,
+    { method: "POST", body: formData },
+  );
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.secure_url) {
+    throw new Error(data?.error?.message ?? "Erreur d'envoi de l'audio");
+  }
+  return data.secure_url as string;
 }

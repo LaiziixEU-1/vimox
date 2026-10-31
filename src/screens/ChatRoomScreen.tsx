@@ -1,8 +1,18 @@
+/*VIMOX-V25*/
+/*VIMOX-V33*/
+/*VIMOX-V22*/
+/*VIMOX-V18*/
+/*VIMOX-V17*/
+/*VIMOX-V16*/
+/*VIMOX-V11*/
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ScrollView,
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -14,19 +24,22 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as Location from "expo-location";
 import * as Contacts from "expo-contacts";
 import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import EmojiKeyboard from "rn-emoji-keyboard";
+import { VimoxEmojiKeyboard, removeLastGrapheme } from "../components/VimoxEmojiKeyboard";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   addDoc,
   collection,
   doc,
   getDoc,
+  onSnapshot,
   serverTimestamp,
 } from "firebase/firestore";
 import { ChatMessage, RootStackParamList, VimoXUser } from "../models/types";
@@ -45,14 +58,24 @@ import {
   deleteMessage,
 } from "../services/chatService";
 import { loadLocalHistory } from "../services/localHistory";
+import { uploadAudioFile } from "../services/storageService";
+import { isReallyOnline } from "../services/presence";
 import { blockUser, reportUser } from "../services/moderationService";
+import { guardText } from "../services/moderationGuard";
 import { db } from "../config/firebase";
 import { notifyNewMessage } from "../services/notificationService";
 import { sendFriendRequest } from "../services/friendService";
 import { VoiceMessageButton } from "../components/VoiceMessageButton";
 import { AudioBubble } from "../components/AudioBubble";
 import { GameLauncher } from "../games/GameLauncher";
-import { createGame, GameType } from "../games/gameService";
+import { ageLimitsFor, cancelFindMatch, findMatch, getLastFilters } from "../services/matchService";
+import { pagerBus } from "../navigation/pagerBus";
+import { registerSkipAndMaybeAd } from "../services/adService";
+import { HouseAd } from "../components/HouseAd";
+import { useScreenshotNotice } from "../hooks/useScreenshotNotice";
+import { createGame, createBotGame, GameType } from "../games/gameService";
+import { useVideoPlayer, VideoView } from "expo-video";
+import { videoURLFromPoster } from "../services/snapService";
 import { translateText, getDeviceLang } from "../services/translationService";
 import {
   uploadDocument,
@@ -67,10 +90,22 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChatRoom">;
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
+// Couleurs des messages façon Snap : une fine barre à gauche
+const ME_BAR = colors.neonBlue;
+const THEM_BAR = "#B4384D";
+function dayLabelOf(ms: number) {
+  const d = new Date(ms);
+  const now = new Date();
+  const y = new Date();
+  y.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return "Aujourd'hui";
+  if (d.toDateString() === y.toDateString()) return "Hier";
+  return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+}
 const TEXT_SIZES = { small: 13, medium: 15, large: 18 };
 const BACKGROUNDS = [
   { key: "default", label: "Défaut", color: colors.black },
-  { key: "dark", label: "Sombre", color: "#0a0a0a" },
+  { key: "dark", label: "Sombre", color: "#09090C" },
   { key: "navy", label: "Marine", color: "#0a0f1e" },
   { key: "wine", label: "Bordeaux", color: "#1a0a0e" },
 ];
@@ -127,14 +162,43 @@ function LinkifiedText({ text, style }: { text: string; style: any }) {
   );
 }
 
+
+// 💡 Brise-glace pour lancer la conversation avec un inconnu
+const ICEBREAKERS = [
+  "Salut ! Tu viens d'où ?",
+  "Quel est le meilleur film que tu aies vu ?",
+  "Tu écoutes quoi en ce moment ?",
+  "Si tu pouvais vivre n'importe où, ce serait où ?",
+  "Ton plat préféré, c'est quoi ?",
+  "Plutôt mer ou montagne ?",
+  "Quelle série tu me conseilles ?",
+  "Tu as un talent caché ?",
+  "Le dernier truc qui t'a fait rire ?",
+  "Tu joues à des jeux vidéo ?",
+  "Un voyage de rêve ?",
+  "Chat ou chien ?",
+  "Tu fais du sport ?",
+  "Ta chanson du moment ?",
+  "Qu'est-ce qui t'a rendu heureux cette semaine ?",
+  "Plutôt soirée ou matinée ?",
+  "Si tu gagnais au loto, tu ferais quoi en premier ?",
+  "Un super-pouvoir que tu aimerais avoir ?",
+  "Ton emoji préféré ?",
+  "Le meilleur conseil qu'on t'ait donné ?",
+  "Tu préfères les films d'horreur ou les comédies ?",
+  "C'est quoi ta passion ?",
+];
+
 export function ChatRoomScreen({ route, navigation }: Props) {
-  const { roomId } = route.params;
+  const { roomId, video } = route.params;
   const { profile } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [partnerId, setPartnerId] = useState<string>();
   const [partnerProfile, setPartnerProfile] = useState<VimoXUser | null>(null);
   const [isActive, setIsActive] = useState(true);
+  // 💡 Brise-glace : 3 questions au début de la conversation (tant que je n'ai rien écrit)
+  const [iceSeed, setIceSeed] = useState(() => Math.floor(Math.random() * 1000));
   const [isTyping, setIsTyping] = useState(false);
   const [partnerActivity, setPartnerActivity] = useState<string | null>(null);
   const [showPartnerProfile, setShowPartnerProfile] = useState(false);
@@ -151,6 +215,26 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     textSize: "medium",
   });
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  // Défilement intelligent : on ne redescend tout seul que si on est déjà en bas
+  const nearBottom = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
+  const [kbOpen, setKbOpen] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setKbOpen(true),
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKbOpen(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerIdRef = useRef<string | undefined>(undefined);
 
@@ -193,10 +277,14 @@ export function ChatRoomScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     if (!partnerId) return;
-    getDoc(doc(db, "users", partnerId)).then((snap) => {
-      if (snap.exists())
-        setPartnerProfile({ id: snap.id, ...snap.data() } as VimoXUser);
-    });
+    return onSnapshot(
+      doc(db, "users", partnerId),
+      (snap) => {
+        if (snap.exists())
+          setPartnerProfile({ id: snap.id, ...snap.data() } as VimoXUser);
+      },
+      () => {},
+    );
   }, [partnerId]);
 
   useEffect(() => {
@@ -210,19 +298,15 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     return subscribeActivity(roomId, pid, setPartnerActivity);
   }, [roomId, partnerId]);
 
-  useEffect(() => {
-    if (messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (last.senderId === profile?.id) return;
+  const partnerOnline = isReallyOnline(partnerProfile as any);
+
+  // Prévient le PARTENAIRE (et pas soi-même) d'un message qu'on vient d'envoyer,
+  // seulement s'il n'est pas en ligne : sinon il le voit déjà en direct.
+  function notifyPartner(preview: string) {
     const pid = partnerId ?? partnerIdRef.current;
-    if (pid) {
-      notifyNewMessage(
-        pid,
-        profile?.name ?? "Quelqu'un",
-        last.imageURL ? "📷 Photo" : (last.text ?? ""),
-      ).catch(() => {});
-    }
-  }, [messages]);
+    if (!pid || !profile || partnerOnline) return;
+    notifyNewMessage(pid, profile.name ?? "Quelqu'un", preview, { roomId }).catch(() => {});
+  }
 
   const title = useMemo(
     () => (isActive ? "Connecté en temps réel" : "Partenaire déconnecté"),
@@ -242,6 +326,14 @@ export function ChatRoomScreen({ route, navigation }: Props) {
 
   async function send() {
     if (!profile || !text.trim()) return;
+    const verdict = await guardText(text, {
+      userId: profile.id,
+      where: `room:${roomId}`,
+    });
+    if (!verdict.ok) {
+      Alert.alert("Message non envoyé", verdict.message);
+      return;
+    }
     const value = text;
     setText("");
 
@@ -261,45 +353,47 @@ export function ChatRoomScreen({ route, navigation }: Props) {
         replyTo.senderId,
       ).catch(() => setText(value));
       setReplyTo(null);
+      notifyPartner(value);
       await setTypingStatus(roomId, profile.id, false).catch(() => {});
       return;
     }
 
     await sendMessage(roomId, profile.id, value).catch(() => setText(value));
+    notifyPartner(value);
     await setTypingStatus(roomId, profile.id, false).catch(() => {});
   }
 
   async function handleAudioReady(uri: string, duration: number) {
     if (!profile) return;
-    if (duration > 30) {
-      Alert.alert("Trop long", "Maximum 30 secondes pour un message audio.");
-      return;
-    }
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const reader = new FileReader();
-      const base64: string = await new Promise((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      const audioUrl = await uploadAudioFile(uri, `chats/${roomId}`);
       await addDoc(collection(db, "rooms", roomId, "messages"), {
         type: "audio",
-        audioUrl: base64,
+        audioUrl,
         duration,
         senderId: profile.id,
         createdAt: serverTimestamp(),
-        sentAt: Date.now(),
+        sentAt: serverTimestamp(),
         readBy: [profile.id],
       });
-    } catch {
-      Alert.alert("Erreur", "Impossible d'envoyer l'audio.");
+      notifyPartner("🎤 Message vocal");
+    } catch (e: any) {
+      Alert.alert("Erreur", `Impossible d'envoyer l'audio : ${e?.message ?? "erreur réseau"}`);
     }
   }
 
-  async function handleGameSelect(gameType: GameType) {
+  async function handleGameSelect(gameType: GameType, opts?: { bot?: boolean; level?: number }) {
     if (!profile) return;
+    // Contre l'ordinateur : pas besoin du partenaire
+    if (opts?.bot) {
+      try {
+        const gameId = await createBotGame(roomId, gameType, profile.id, opts.level ?? 2);
+        navigation.navigate("GameScreen", { chatId: roomId, gameId });
+      } catch (e) {
+        Alert.alert("Erreur jeu", `${e instanceof Error ? e.message : String(e)}`);
+      }
+      return;
+    }
     const pid = partnerId ?? partnerIdRef.current;
     if (!pid) {
       Alert.alert("Jeu impossible", "Le partenaire n'est pas encore chargé.");
@@ -313,7 +407,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
         gameType,
         senderId: profile.id,
         createdAt: serverTimestamp(),
-        sentAt: Date.now(),
+        sentAt: serverTimestamp(),
         readBy: [profile.id],
       }).catch(() => {});
       navigation.navigate("GameScreen", { chatId: roomId, gameId });
@@ -325,12 +419,25 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     }
   }
 
+  // « En train d'écrire » : une écriture toutes les 2,5 s au plus. Avant : une écriture Firestore
+  // par lettre tapée, qui saturait le document de la conversation et coûtait cher.
+  const lastTypingWrite = useRef(0);
   function handleTextChange(value: string) {
     setText(value);
     if (!profile) return;
-    setTypingStatus(roomId, profile.id, value.length > 0).catch(() => {});
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    if (value.length === 0) {
+      lastTypingWrite.current = 0;
+      setTypingStatus(roomId, profile.id, false).catch(() => {});
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTypingWrite.current > 2500) {
+      lastTypingWrite.current = now;
+      setTypingStatus(roomId, profile.id, true).catch(() => {});
+    }
     typingTimeout.current = setTimeout(() => {
+      lastTypingWrite.current = 0;
       setTypingStatus(roomId, profile.id, false).catch(() => {});
     }, 2000);
   }
@@ -343,7 +450,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       allowsEditing: true,
       quality: 0.7,
     });
@@ -351,21 +458,16 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     await uploadAndSend(result.assets[0].uri);
   }
 
+  // La caméra VimoX complète (effets, musique, texte, dessin, vidéo...), comme sur Snap :
+  // la photo ou la vidéo part directement dans cette conversation
   async function openCamera() {
     setShowEmojiPicker(false);
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission refusée", "Autorise l'accès à ta caméra.");
-      return;
-    }
-    if (profile) setActivityStatus(roomId, profile.id, "photo").catch(() => {});
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      quality: 0.7,
+    navigation.navigate("CameraDirect", {
+      directSendToRoom: {
+        roomId,
+        partnerName: partnerProfile?.name ?? "Partenaire",
+      },
     });
-    if (profile) setActivityStatus(roomId, profile.id, null).catch(() => {});
-    if (result.canceled || !result.assets[0]) return;
-    await uploadAndSend(result.assets[0].uri);
   }
 
   async function uploadAndSend(uri: string) {
@@ -373,6 +475,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     setSendingImage(true);
     try {
       await sendImageMessage(roomId, profile.id, uri);
+      notifyPartner("📷 Photo");
     } catch {
       Alert.alert("Erreur", "Impossible d'envoyer la photo.");
     } finally {
@@ -495,13 +598,135 @@ export function ChatRoomScreen({ route, navigation }: Props) {
     ]);
   }
 
+  // ───── Façon Omegle : « Suivant », inconnu parti, intérêts communs, vidéo auto ─────
+  const [nexting, setNexting] = useState(false);
+  const [commonInterests, setCommonInterests] = useState<string[]>([]);
+  // Âges copiés dans la conversation au moment du match (le seul endroit où l'âge est visible)
+  const [roomAges, setRoomAges] = useState<Record<string, number>>({});
+  const autoVideoDone = useRef(false);
+
+  // Capture d'écran : l'inconnu en est prévenu dans la conversation
+  useScreenshotNotice(() => {
+    if (!profile) return;
+    addDoc(collection(db, "rooms", roomId, "messages"), {
+      type: "screenshot",
+      text: `${profile.name ?? "L'inconnu"} a fait une capture d'écran`,
+      senderId: profile.id,
+      readBy: [profile.id],
+      createdAt: serverTimestamp(),
+      sentAt: serverTimestamp(),
+    }).catch(() => {});
+  }, !!profile);
+
+  // ➕ Ajouter l'inconnu en ami sans quitter la conversation (comme sur Snap)
+  const [friendAsked, setFriendAsked] = useState(false);
+  async function addPartnerAsFriend() {
+    const pid = partnerId ?? partnerIdRef.current;
+    if (!profile || !pid || friendAsked) return;
+    setFriendAsked(true);
+    try {
+      await sendFriendRequest(profile.id, profile.name, profile.profilePhotoURL, pid);
+    } catch {
+      setFriendAsked(false);
+      Alert.alert("Demande impossible", "Réessaie dans un instant.");
+    }
+  }
+
+  // 🚩 Signaler et passer : signalement + blocage + nouvel inconnu, en un geste
+  async function reportAndNext() {
+    if (!profile) return;
+    const pid = partnerId ?? partnerIdRef.current;
+    await reportUser(profile.id, roomId, pid).catch(() => {});
+    if (pid) await blockUser(profile.id, pid).catch(() => {});
+    goNext({ noAd: true });
+  }
+
+  useEffect(
+    () =>
+      onSnapshot(
+        doc(db, "rooms", roomId),
+        (snap) => {
+          setCommonInterests((snap.data()?.commonInterests as string[]) ?? []);
+          setRoomAges((snap.data()?.ages as Record<string, number>) ?? {});
+        },
+        () => {},
+      ),
+    [roomId],
+  );
+
+  // Match en mode vidéo : l'appel s'ouvre tout seul chez les deux personnes
+  useEffect(() => {
+    if (!video || autoVideoDone.current) return;
+    autoVideoDone.current = true;
+    const t = setTimeout(
+      () => navigation.navigate("VideoCall", { roomId, audioOnly: false, joining: true }),
+      400,
+    );
+    return () => clearTimeout(t);
+  }, [video]);
+
+  // « Suivant » : on quitte et on enchaîne aussitôt sur un nouvel inconnu, mêmes réglages
+  // Pub maison (quand aucune pub AdMob n'est disponible)
+  const [houseAd, setHouseAd] = useState(false);
+  const houseAdDone = useRef<(() => void) | null>(null);
+  const goPremiumAfterAd = useRef(false);
+  function closeHouseAd(toPremium: boolean) {
+    goPremiumAfterAd.current = toPremium;
+    setHouseAd(false);
+    houseAdDone.current?.();
+    houseAdDone.current = null;
+  }
+
+  async function goNext(opts?: any) {
+    if (!profile || nexting) return;
+    setNexting(true);
+    leaveRoom(roomId, profile.id).catch(() => {});
+    // Version gratuite : une pub toutes les 3 personnes passées. Jamais avec Premium,
+    // et jamais après « Signaler et passer » (on ne pénalise pas un signalement).
+    if (opts?.noAd !== true) {
+      const ad = await registerSkipAndMaybeAd(!!profile.isPremium, (profile.age ?? 0) < 18);
+      if (ad === "house") {
+        await new Promise<void>((resolve) => {
+          houseAdDone.current = resolve;
+          setHouseAd(true);
+        });
+        if (goPremiumAfterAd.current) {
+          goPremiumAfterAd.current = false;
+          setNexting(false);
+          navigation.navigate("Premium");
+          return;
+        }
+      }
+    }
+    const lim = ageLimitsFor(profile.age);
+    const f = getLastFilters() ?? { ageMin: lim.min, ageMax: lim.max };
+    try {
+      const id = await findMatch(profile, f);
+      navigation.replace("ChatRoom", { roomId: id, video: f.mode === "video" });
+    } catch (e) {
+      setNexting(false);
+      if (!(e instanceof Error && e.message === "Cancelled")) {
+        Alert.alert("Connexion interrompue", "Réessaie dans un instant.");
+      }
+    }
+  }
+
+  function cancelNext() {
+    cancelFindMatch();
+    setNexting(false);
+    navigation.replace("Matching");
+    setTimeout(() => pagerBus.go("Matching"), 400);
+  }
+
   async function handleLeave() {
     const pid = partnerId ?? partnerIdRef.current;
     const doLeave = () => {
       navigation.replace("Matching");
+      // On revient sur la page Match (et pas sur la caméra)
+      setTimeout(() => pagerBus.go("Matching"), 400);
       if (profile) leaveRoom(roomId, profile.id).catch(() => {});
     };
-    if (pid && partnerProfile) {
+    if (pid && partnerProfile && !friendAsked) {
       Alert.alert("Quitter", `Ajouter ${partnerProfile.name} en ami ?`, [
         { text: "Juste quitter", style: "destructive", onPress: doLeave },
         {
@@ -564,9 +789,9 @@ export function ChatRoomScreen({ route, navigation }: Props) {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
-        <View style={styles.header}>
-          <Pressable onPress={handleLeave} style={styles.backBtn}>
-            <Text style={styles.backText}>‹</Text>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 44) + 4 }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Retour" onPress={handleLeave} hitSlop={10} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={28} color={colors.text} />
           </Pressable>
           <Pressable
             onPress={() => setShowPartnerProfile((v) => !v)}
@@ -587,30 +812,30 @@ export function ChatRoomScreen({ route, navigation }: Props) {
                 style={[
                   styles.onlineDot,
                   {
-                    backgroundColor: partnerProfile?.isOnline
-                      ? "#28F7A1"
-                      : "#444",
+                    backgroundColor: partnerOnline ? "#28F7A1" : "#444",
                   },
                 ]}
               />
             </View>
-            <View>
-              <Text style={styles.partnerName}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.partnerName} numberOfLines={1}>
                 {partnerProfile?.name ?? "Chat anonyme"}
               </Text>
               <Text
+                numberOfLines={1}
                 style={[
                   styles.partnerStatus,
                   !isActive && { color: "#FF4444" },
+                  (isTyping || partnerActivity) && { color: colors.neonRedText },
                 ]}
               >
                 {isTyping
-                  ? "✍️ En train d'écrire..."
+                  ? "écrit…"
                   : partnerActivity === "recording"
-                    ? "🎙️ Enregistre un audio..."
+                    ? "enregistre un audio…"
                     : partnerActivity === "photo"
-                      ? "📷 Prend une photo..."
-                      : partnerProfile?.isOnline
+                      ? "prend une photo…"
+                      : partnerOnline
                         ? "En ligne"
                         : title}
               </Text>
@@ -618,37 +843,68 @@ export function ChatRoomScreen({ route, navigation }: Props) {
           </Pressable>
           <View style={styles.headerActions}>
             <Pressable
-              onPress={handleCallPress}
-              style={[styles.actionBtn, styles.actionBtnPrimary]}
+              onPress={addPartnerAsFriend}
+              disabled={friendAsked || !partnerId}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={friendAsked ? "Demande d'ami envoyée" : "Ajouter en ami"}
+              style={styles.headerIcon}
             >
-              <Text style={styles.actionTextLg}>📞</Text>
+              <Ionicons
+                name={friendAsked ? "checkmark-circle" : "person-add-outline"}
+                size={21}
+                color={friendAsked ? "#28F7A1" : colors.text}
+              />
             </Pressable>
             <Pressable
+              onPress={goNext}
+              disabled={nexting}
+              accessibilityRole="button"
+              accessibilityLabel="Inconnu suivant"
+              style={({ pressed }) => [styles.nextBtn, pressed && { opacity: 0.8 }]}
+            >
+              <Text style={styles.nextBtnTxt}>Suivant</Text>
+              <Ionicons name="play-skip-forward" size={14} color="#fff" />
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Appel vocal" onPress={handleCallPress} hitSlop={8} style={styles.headerIcon}>
+              <Ionicons name="call-outline" size={22} color={colors.text} />
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Plus d'options"
               onPress={() =>
                 Alert.alert("Plus d'options", "", [
-                  {
-                    text: "🔍 Rechercher",
-                    onPress: () => setShowSearch((v) => !v),
-                  },
-                  {
-                    text: "🖼️ Médias partagés",
-                    onPress: () => setShowMedia(true),
-                  },
-                  {
-                    text: "🎨 Apparence du chat",
-                    onPress: () => setShowAppearance(true),
-                  },
-                  { text: "⚠ Signaler", style: "destructive", onPress: report },
-                  { text: "✕ Bloquer", style: "destructive", onPress: block },
+                  { text: "Rechercher", onPress: () => setShowSearch((v) => !v) },
+                  { text: "Médias partagés", onPress: () => setShowMedia(true) },
+                  { text: "Apparence du chat", onPress: () => setShowAppearance(true) },
+                  { text: "🚩 Signaler et passer", style: "destructive", onPress: reportAndNext },
+                  { text: "Signaler", style: "destructive", onPress: report },
+                  { text: "Bloquer", style: "destructive", onPress: block },
                   { text: "Annuler", style: "cancel" },
                 ])
               }
-              style={styles.actionBtn}
+              hitSlop={8}
+              style={styles.headerIcon}
             >
-              <Text style={styles.actionTextLg}>⋯</Text>
+              <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
             </Pressable>
           </View>
         </View>
+
+        {!isActive && !nexting && (
+          <View style={styles.leftBar}>
+            <Text style={styles.leftTxt}>L'inconnu a quitté la conversation</Text>
+            <Pressable onPress={goNext} style={styles.leftBtn} accessibilityRole="button">
+              <Text style={styles.leftBtnTxt}>Nouvel inconnu</Text>
+            </Pressable>
+          </View>
+        )}
+        {commonInterests.length > 0 && (
+          <View style={styles.interestBar}>
+            <Ionicons name="sparkles" size={14} color={colors.gold} />
+            <Text style={styles.interestTxt} numberOfLines={1}>
+              Vous aimez tous les deux : {commonInterests.join(", ")}
+            </Text>
+          </View>
+        )}
 
         {showSearch && (
           <View style={styles.searchBar}>
@@ -661,7 +917,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
               autoFocus
             />
             {searchQuery.length > 0 && (
-              <Pressable onPress={() => setSearchQuery("")}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Fermer" onPress={() => setSearchQuery("")}>
                 <Text style={styles.searchClear}>✕</Text>
               </Pressable>
             )}
@@ -685,8 +941,13 @@ export function ChatRoomScreen({ route, navigation }: Props) {
             <View>
               <Text style={styles.partnerCardName}>{partnerProfile.name}</Text>
               <Text style={styles.partnerCardInfo}>
-                {partnerProfile.age} ans · {partnerProfile.gender} ·{" "}
-                {partnerProfile.country}
+                {[
+                  partnerId && typeof roomAges[partnerId] === "number" ? `${roomAges[partnerId]} ans` : "",
+                  partnerProfile.gender,
+                  partnerProfile.country,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </Text>
               {partnerProfile.bio ? (
                 <Text style={styles.partnerCardBio}>
@@ -697,21 +958,67 @@ export function ChatRoomScreen({ route, navigation }: Props) {
           </View>
         )}
 
+        <View style={{ flex: 1 }}>
         <FlatList
           ref={listRef}
+          // Fluidité : seuls les messages proches de l'écran sont dessinés
+          initialNumToRender={20}
+          maxToRenderPerBatch={12}
+          windowSize={11}
           data={filteredMessages}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.messages}
-          onContentSizeChange={() =>
-            listRef.current?.scrollToEnd({ animated: true })
+          contentContainerStyle={styles.msgList}
+          onContentSizeChange={() => {
+            const last = filteredMessages[filteredMessages.length - 1];
+            if (nearBottom.current || last?.senderId === profile?.id) {
+              listRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } =
+              e.nativeEvent;
+            const dist =
+              contentSize.height - contentOffset.y - layoutMeasurement.height;
+            nearBottom.current = dist < 120;
+            const far = dist > 260;
+            setShowJump((v) => (v === far ? v : far));
+          }}
+          scrollEventThrottle={100}
+          ListEmptyComponent={
+            <View style={styles.welcome}>
+              <Text style={styles.welcomeIcon}>👋</Text>
+              <Text style={styles.welcomeTitle}>Tu parles avec un inconnu</Text>
+              <Text style={styles.welcomeTxt}>
+                Dis bonjour ! Reste respectueux, et ne partage jamais ton adresse, ton école ou ton numéro.
+                {"\n"}Un problème ? Touche ⋯ puis « Signaler et passer ».
+              </Text>
+            </View>
           }
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => {
+            const prev = index > 0 ? filteredMessages[index - 1] : undefined;
+            const newDay =
+              !prev ||
+              new Date(prev.sentAt).toDateString() !==
+                new Date(item.sentAt).toDateString();
+            const head =
+              newDay ||
+              !prev ||
+              prev.senderId !== item.senderId ||
+              item.sentAt - prev.sentAt > 5 * 60 * 1000 ||
+              !!(prev as any).type;
+            return (
+            <View>
+              {newDay && <Text style={styles.dayLabel}>{dayLabelOf(item.sentAt)}</Text>}
             <Bubble
               message={item}
+              head={head}
+              partnerName={partnerProfile?.name}
               mine={item.senderId === profile?.id}
               myId={profile?.id ?? ""}
               roomId={roomId}
               textSize={textSize}
+              autoTranslate={(profile as any)?.autoTranslate === true}
+              onOpenImage={(uri) => setViewerUri(uri)}
               onReport={() => reportMessage(roomId, item.id)}
               onOpenGame={(gameId) =>
                 navigation.navigate("GameScreen", { chatId: roomId, gameId })
@@ -720,6 +1027,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
                 navigation.navigate("VideoCall", {
                   roomId: (item as any).callRoomId ?? roomId,
                   audioOnly: (item as any).callType === "audio",
+                  joining: true,
                 })
               }
               onReply={() => setReplyTo(item)}
@@ -741,12 +1049,89 @@ export function ChatRoomScreen({ route, navigation }: Props) {
                 });
               }}
             />
-          )}
+            </View>
+            );
+          }}
         />
+        {showJump && (
+          <Pressable
+            onPress={() => {
+              nearBottom.current = true;
+              listRef.current?.scrollToEnd({ animated: true });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Aller aux derniers messages"
+            style={({ pressed }) => [
+              {
+                position: "absolute",
+                right: 14,
+                bottom: 12,
+                width: 42,
+                height: 42,
+                borderRadius: 21,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#242220",
+                borderWidth: 1,
+                borderColor: "#3a362f",
+              },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Ionicons name="chevron-down" size={22} color="#f2f0ec" />
+          </Pressable>
+        )}
+        </View>
+
+        <Modal
+          visible={!!viewerUri}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setViewerUri(null)}
+        >
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.95)",
+              justifyContent: "center",
+            }}
+            onPress={() => setViewerUri(null)}
+          >
+            {viewerUri && videoURLFromPoster(viewerUri) ? (
+              <ChatVideo uri={videoURLFromPoster(viewerUri) as string} />
+            ) : viewerUri ? (
+              <Image
+                source={{ uri: viewerUri }}
+                style={{ width: "100%", height: "82%" }}
+                resizeMode="contain"
+              />
+            ) : null}
+            <Pressable
+              onPress={() => setViewerUri(null)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer la photo"
+              style={{
+                position: "absolute",
+                top: insets.top + 12,
+                right: 16,
+                width: 42,
+                height: 42,
+                borderRadius: 21,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "rgba(255,255,255,0.14)",
+              }}
+            >
+              <Ionicons name="close" size={24} color="#fff" />
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {isTyping && (
           <View style={styles.typingBar}>
-            <Text style={styles.typingText}>✍️ En train d'écrire...</Text>
+            <Text style={styles.typingText}>écrit…</Text>
           </View>
         )}
 
@@ -760,11 +1145,11 @@ export function ChatRoomScreen({ route, navigation }: Props) {
                   : partnerProfile?.name}
               </Text>
               <Text style={styles.replyBarText} numberOfLines={1}>
-                {replyTo.imageURL ? "📷 Photo" : replyTo.text}
+                {replyTo.imageURL ? "Photo" : replyTo.text}
               </Text>
             </View>
-            <Pressable onPress={() => setReplyTo(null)}>
-              <Text style={styles.replyBarClose}>✕</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Fermer" onPress={() => setReplyTo(null)}>
+              <Ionicons name="close" size={20} color={colors.muted} />
             </Pressable>
           </View>
         )}
@@ -772,81 +1157,126 @@ export function ChatRoomScreen({ route, navigation }: Props) {
         {editingId && (
           <View style={styles.replyBar}>
             <Text style={styles.replyBarLabel}>Modifier le message</Text>
-            <Pressable
+            <Pressable accessibilityRole="button" accessibilityLabel="Fermer"
               onPress={() => {
                 setEditingId(null);
                 setText("");
               }}
             >
-              <Text style={styles.replyBarClose}>✕</Text>
+              <Ionicons name="close" size={20} color={colors.muted} />
             </Pressable>
           </View>
         )}
 
-        <View style={styles.composer}>
-          <Pressable
-            onPress={() => setShowEmojiPicker((v) => !v)}
-            style={[
-              styles.composerBtn,
-              showEmojiPicker && styles.composerBtnActive,
+        {isActive && !text && !editingId && !messages.some((m) => m.senderId === profile?.id && !(m as any).deleted && !(m as any).type) && (
+          <View style={styles.iceRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}>
+              {[0, 1, 2].map((k) => {
+                const q = ICEBREAKERS[(iceSeed + k * 7) % ICEBREAKERS.length];
+                return (
+                  <Pressable
+                    key={q}
+                    onPress={() => setText(q)}
+                    style={({ pressed }) => [styles.iceChip, pressed && { opacity: 0.75 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Utiliser : ${q}`}
+                  >
+                    <Text style={styles.iceTxt}>💡 {q}</Text>
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                onPress={() => setIceSeed((v) => v + 3)}
+                style={({ pressed }) => [styles.iceChip, styles.iceMore, pressed && { opacity: 0.75 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Autres idées"
+              >
+                <Ionicons name="shuffle" size={16} color={colors.text} />
+              </Pressable>
+            </ScrollView>
+          </View>
+        )}
+
+        <View
+          style={[
+            styles.composerBar,
+            { paddingBottom: kbOpen ? 8 : Math.max(insets.bottom, 10) },
+          ]}
+        >
+          <Pressable accessibilityRole="button" accessibilityLabel="Prendre une photo"
+            onPress={handlePhotoPress}
+            disabled={sendingImage}
+            style={({ pressed }) => [
+              styles.roundBtn,
+              (pressed || sendingImage) && { opacity: 0.6 },
             ]}
           >
-            <Text style={styles.composerBtnText}>
-              {showEmojiPicker ? "⌨️" : "😊"}
-            </Text>
+            <Ionicons
+              name={(sendingImage ? "hourglass-outline" : "camera") as any}
+              size={22}
+              color={colors.text}
+            />
           </Pressable>
-          <Pressable
-            onPress={handlePhotoPress}
-            style={[styles.composerBtn, sendingImage && { opacity: 0.5 }]}
-            disabled={sendingImage}
-          >
-            <Text style={styles.composerBtnText}>
-              {sendingImage ? "⏳" : "📷"}
-            </Text>
-          </Pressable>
-          <Pressable onPress={handleAttachPress} style={styles.composerBtn}>
-            <Text style={styles.composerBtnText}>📎</Text>
-          </Pressable>
-          <GameLauncher onSelect={handleGameSelect} />
-          <TextInput
-            value={text}
-            onChangeText={handleTextChange}
-            placeholder="Message..."
-            placeholderTextColor={colors.muted}
-            style={[styles.input, { fontSize: textSize }]}
-            multiline
-            onFocus={() => setShowEmojiPicker(false)}
-          />
-          {text.trim().length === 0 && (
-            <VoiceMessageButton onRecorded={handleAudioReady} />
-          )}
-          {text.trim().length > 0 && (
-            <Pressable onPress={send} style={styles.sendBtn}>
-              <Text style={styles.sendText}>➤</Text>
+          <View style={styles.pill}>
+            <TextInput
+              value={text}
+              onChangeText={handleTextChange}
+              placeholder="Envoyer un chat"
+              placeholderTextColor={colors.muted}
+              style={[styles.pillInput, { fontSize: textSize }]}
+              multiline
+              onFocus={() => setShowEmojiPicker(false)}
+            />
+            <Pressable accessibilityRole="button" accessibilityLabel="Joindre" onPress={handleAttachPress} hitSlop={8}>
+              <Ionicons name="attach" size={22} color={colors.muted} />
             </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Afficher ou masquer les emojis"
+              onPress={() => {
+                Keyboard.dismiss();
+                setShowEmojiPicker((v) => !v);
+              }}
+              hitSlop={8}
+            >
+              <Ionicons
+                name={showEmojiPicker ? "keypad-outline" : "happy-outline"}
+                size={23}
+                color={colors.muted}
+              />
+            </Pressable>
+          </View>
+          {text.trim().length > 0 ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Envoyer"
+              onPress={send}
+              style={({ pressed }) => [styles.sendBtn2, pressed && { opacity: 0.8 }]}
+            >
+              <Ionicons name="arrow-up" size={22} color="#fff" />
+            </Pressable>
+          ) : (
+            <>
+              <GameLauncher onSelect={handleGameSelect} />
+              <VoiceMessageButton onRecorded={handleAudioReady} maxSeconds={30} />
+            </>
           )}
         </View>
       </KeyboardAvoidingView>
 
-      <EmojiKeyboard
-        onEmojiSelected={(emoji: { emoji: string }) =>
-          setText((v) => v + emoji.emoji)
-        }
+      {nexting && (
+        <View style={styles.nextOverlay}>
+          <ActivityIndicator color={colors.neonRed} size="large" />
+          <Text style={styles.nextTitle}>Recherche d'un nouvel inconnu…</Text>
+          <Pressable onPress={cancelNext} style={styles.nextCancel} accessibilityRole="button">
+            <Text style={styles.nextCancelTxt}>Arrêter</Text>
+          </Pressable>
+        </View>
+      )}
+
+      <HouseAd visible={houseAd} onClose={() => closeHouseAd(false)} onPremium={() => closeHouseAd(true)} />
+
+      <VimoxEmojiKeyboard
         open={showEmojiPicker}
         onClose={() => setShowEmojiPicker(false)}
-        theme={{
-          backdrop: "transparent",
-          knob: colors.neonRed,
-          container: colors.card,
-          header: colors.text,
-          skinTonesContainer: colors.card,
-          category: {
-            icon: colors.muted,
-            iconActive: colors.neonRed,
-            container: colors.card,
-            containerActive: "rgba(232,0,10,0.15)",
-          },
-        }}
+        onEmoji={(e) => setText((v) => v + e)}
+        onBackspace={() => setText((v) => removeLastGrapheme(v))}
       />
 
       <Modal
@@ -859,7 +1289,7 @@ export function ChatRoomScreen({ route, navigation }: Props) {
             <Text style={styles.mediaTitle}>
               Médias partagés ({mediaMessages.length})
             </Text>
-            <Pressable onPress={() => setShowMedia(false)}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Fermer" onPress={() => setShowMedia(false)}>
               <Text style={styles.mediaClose}>✕</Text>
             </Pressable>
           </View>
@@ -869,10 +1299,19 @@ export function ChatRoomScreen({ route, navigation }: Props) {
             numColumns={3}
             contentContainerStyle={{ padding: 8 }}
             renderItem={({ item }) => (
-              <Image
-                source={{ uri: item.imageURL }}
-                style={styles.mediaThumb}
-              />
+              <Pressable
+                onPress={() => {
+                  setShowMedia(false);
+                  setTimeout(() => setViewerUri(item.imageURL ?? null), 350);
+                }}
+                accessibilityRole="imagebutton"
+                accessibilityLabel="Ouvrir la photo"
+              >
+                <Image
+                  source={{ uri: item.imageURL }}
+                  style={styles.mediaThumb}
+                />
+              </Pressable>
             )}
             ListEmptyComponent={
               <Text style={styles.mediaEmpty}>
@@ -956,6 +1395,8 @@ export function ChatRoomScreen({ route, navigation }: Props) {
 
 function Bubble({
   message,
+  head,
+  partnerName,
   mine,
   myId,
   roomId,
@@ -967,8 +1408,12 @@ function Bubble({
   onEdit,
   onCopy,
   onForward,
+  autoTranslate,
+  onOpenImage,
 }: {
   message: ChatMessage;
+  head: boolean;
+  partnerName?: string;
   mine: boolean;
   myId: string;
   roomId: string;
@@ -980,6 +1425,8 @@ function Bubble({
   onEdit: () => void;
   onCopy: () => void;
   onForward: () => void;
+  autoTranslate: boolean;
+  onOpenImage: (uri: string) => void;
 }) {
   const emojiBig =
     [...(message.text ?? "")].length <= 3 &&
@@ -996,12 +1443,27 @@ function Bubble({
     | string
     | undefined;
 
+  // Le texte des messages n'est envoyé au service de traduction (MyMemory) que si l'utilisateur
+  // a activé la traduction automatique (Paramètres) ou le demande pour CE message.
   useEffect(() => {
-    if (mine || !message.text || (message as any).type || isDeleted) return;
+    if (!autoTranslate || mine || !message.text || (message as any).type || isDeleted) return;
     translateText(message.text, getDeviceLang()).then((t) => {
       if (t && t !== message.text) setTranslated(t);
     });
-  }, [message.text]);
+  }, [message.text, autoTranslate]);
+
+  async function translateNow() {
+    const t = await translateText(message.text, getDeviceLang());
+    if (t && t !== message.text) {
+      setTranslated(t);
+      setShowOriginal(false);
+    } else {
+      Alert.alert(
+        "Traduction",
+        "Rien à traduire : le message est déjà dans ta langue, ou le service est indisponible.",
+      );
+    }
+  }
 
   function handleLongPress() {
     if (isDeleted) return;
@@ -1009,6 +1471,9 @@ function Bubble({
       { text: "😀 Réagir", onPress: () => setShowReactions(true) },
       { text: "↩️ Répondre", onPress: onReply },
       { text: "📋 Copier", onPress: onCopy },
+      ...(!mine && message.text && !(message as any).type
+        ? [{ text: "🌍 Traduire", onPress: translateNow }]
+        : []),
       { text: "➤ Transférer", onPress: onForward },
     ];
     if (mine) {
@@ -1032,6 +1497,15 @@ function Bubble({
   const reactionEntries = Object.entries(reactions).filter(
     ([, u]) => u.length > 0,
   );
+
+  if ((message as any).type === "screenshot") {
+    return (
+      <View style={styles.sysRow}>
+        <Ionicons name="camera-outline" size={14} color={colors.gold} />
+        <Text style={styles.sysTxt}>{mine ? "Tu as fait une capture d'écran" : message.text}</Text>
+      </View>
+    );
+  }
 
   if ((message as any).type === "call") {
     const callType = (message as any).callType === "audio" ? "audio" : "vidéo";
@@ -1206,132 +1680,167 @@ function Bubble({
 
   const displayText =
     !mine && translated && !showOriginal ? translated : message.text;
+  const barColor = mine ? ME_BAR : THEM_BAR;
 
   return (
-    <View style={[styles.bubbleRow, mine ? styles.mineRow : styles.partnerRow]}>
-      <View>
-        <Pressable onLongPress={handleLongPress}>
-          <View
-            style={[
-              styles.bubble,
-              mine ? styles.mineBubble : styles.partnerBubble,
-              isDeleted && styles.deletedBubble,
-            ]}
-          >
-            {replyToText && !isDeleted && (
-              <View style={styles.replyQuote}>
-                <Text style={styles.replyQuoteTxt} numberOfLines={1}>
-                  ↩️ {replyToSenderId === myId ? "Toi" : "Partenaire"}:{" "}
-                  {replyToText}
-                </Text>
-              </View>
-            )}
-            {message.imageURL && !isDeleted ? (
-              <Image
-                source={{ uri: message.imageURL }}
-                style={styles.bubbleImage}
-                resizeMode="cover"
-              />
-            ) : isDeleted ? (
-              <Text style={[styles.bubbleText, styles.deletedText]}>
-                🚫 Message supprimé
+    <View>
+      <Pressable
+        onLongPress={handleLongPress}
+        delayLongPress={300}
+        style={[styles.msgRow, head && styles.msgHead]}
+      >
+        <View style={[styles.msgBar, { backgroundColor: barColor }]} />
+        <View style={styles.msgBody}>
+          {head && (
+            <View style={styles.msgLabelRow}>
+              <Text style={[styles.msgLabel, { color: barColor }]}>
+                {mine ? "MOI" : (partnerName ?? "INCONNU").toUpperCase()}
               </Text>
-            ) : (
-              <LinkifiedText
-                text={displayText ?? ""}
-                style={[
-                  styles.bubbleText,
-                  { fontSize: textSize },
-                  emojiBig && styles.bigEmoji,
-                ]}
-              />
-            )}
-            {!mine && translated && !isDeleted && (
-              <Pressable onPress={() => setShowOriginal((v) => !v)}>
-                <Text style={styles.translateToggle}>
-                  🌍 {showOriginal ? "Voir traduction" : "Voir original"}
-                </Text>
-              </Pressable>
-            )}
-            <View style={styles.bubbleMeta}>
-              {isEdited && !isDeleted && (
-                <Text style={styles.editedTag}>modifié · </Text>
-              )}
-              <Text style={styles.time}>
-                {new Date(message.sentAt).toLocaleTimeString([], {
+              <Text style={styles.msgTime}>
+                {new Date(message.sentAt).toLocaleTimeString("fr-FR", {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
               </Text>
               {mine && (
-                <Text style={styles.readStatus}>{isRead ? "✓✓" : "✓"}</Text>
+                <Ionicons
+                  name={(isRead ? "checkmark-done" : "checkmark") as any}
+                  size={13}
+                  color={isRead ? colors.neonBlue : colors.mutedDark}
+                />
               )}
             </View>
-          </View>
-        </Pressable>
-        {reactionEntries.length > 0 && (
-          <View
-            style={[
-              styles.reactionsRow,
-              mine && { justifyContent: "flex-end" },
-            ]}
-          >
-            {reactionEntries.map(([emoji, users]) => (
-              <Pressable
-                key={emoji}
-                style={[
-                  styles.reactionBubble,
-                  users.includes(myId) && styles.reactionBubbleActive,
-                ]}
-                onPress={() =>
-                  toggleReaction(
-                    (message as any).roomId ?? roomId,
-                    message.id,
-                    myId,
-                    emoji,
-                  )
-                }
-              >
-                <Text style={styles.reactionEmoji}>{emoji}</Text>
-                {users.length > 1 && (
-                  <Text style={styles.reactionCount}>{users.length}</Text>
-                )}
-              </Pressable>
-            ))}
-          </View>
-        )}
-        {showReactions && (
-          <View
-            style={[
-              styles.reactionPicker,
-              mine && { right: 0, left: undefined },
-            ]}
-          >
-            {REACTION_EMOJIS.map((emoji) => (
-              <Pressable
-                key={emoji}
-                style={styles.reactionPickerBtn}
-                onPress={() => {
-                  toggleReaction(
-                    (message as any).roomId ?? roomId,
-                    message.id,
-                    myId,
-                    emoji,
-                  );
-                  setShowReactions(false);
-                }}
-              >
-                <Text style={styles.reactionPickerEmoji}>{emoji}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
+          )}
+          {replyToText && !isDeleted && (
+            <View style={styles.replyQuote}>
+              <Text style={styles.replyQuoteTxt} numberOfLines={1}>
+                {replyToSenderId === myId ? "Toi" : "Partenaire"} : {replyToText}
+              </Text>
+            </View>
+          )}
+          {message.imageURL && !isDeleted ? (
+            <Pressable
+              onPress={() => onOpenImage(message.imageURL as string)}
+              onLongPress={handleLongPress}
+              delayLongPress={300}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Ouvrir la photo"
+            >
+              <Image
+                source={{ uri: message.imageURL }}
+                style={styles.msgImage}
+                resizeMode="cover"
+              />
+              {videoURLFromPoster(message.imageURL) ? (
+                <View style={styles.playOverlay} pointerEvents="none">
+                  <Ionicons name="play" size={36} color="#fff" />
+                </View>
+              ) : null}
+            </Pressable>
+          ) : isDeleted ? (
+            <Text style={[styles.msgText, styles.deletedText]}>
+              {mine ? "Tu as supprimé un chat" : `${partnerName ?? "L'inconnu"} a supprimé un chat`}
+            </Text>
+          ) : (
+            <LinkifiedText
+              text={displayText ?? ""}
+              style={[
+                styles.msgText,
+                { fontSize: textSize },
+                emojiBig && styles.bigEmoji,
+              ]}
+            />
+          )}
+          {!mine && translated && !isDeleted && (
+            <Pressable onPress={() => setShowOriginal((v) => !v)}>
+              <Text style={styles.translateToggle}>
+                {showOriginal ? "Voir la traduction" : "Voir l'original"}
+              </Text>
+            </Pressable>
+          )}
+          {isEdited && !isDeleted && <Text style={styles.editedTag}>modifié</Text>}
+          {reactionEntries.length > 0 && (
+            <View style={styles.reactionsRow}>
+              {reactionEntries.map(([emoji, users]) => (
+                <Pressable
+                  key={emoji}
+                  style={[
+                    styles.reactionBubble,
+                    users.includes(myId) && styles.reactionBubbleActive,
+                  ]}
+                  onPress={() =>
+                    toggleReaction(
+                      (message as any).roomId ?? roomId,
+                      message.id,
+                      myId,
+                      emoji,
+                    )
+                  }
+                >
+                  <Text style={styles.reactionEmoji}>{emoji}</Text>
+                  {users.length > 1 && (
+                    <Text style={styles.reactionCount}>{users.length}</Text>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+      </Pressable>
+      {showReactions && (
+        <View style={[styles.reactionPicker, { left: 28, right: undefined }]}>
+          {REACTION_EMOJIS.map((emoji) => (
+            <Pressable
+              key={emoji}
+              style={styles.reactionPickerBtn}
+              onPress={() => {
+                toggleReaction(
+                  (message as any).roomId ?? roomId,
+                  message.id,
+                  myId,
+                  emoji,
+                );
+                setShowReactions(false);
+              }}
+            >
+              <Text style={styles.reactionPickerEmoji}>{emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
 
+// Lecture d'une vidéo envoyée dans le chat
+function ChatVideo({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.play();
+  });
+  return (
+    <VideoView
+      player={player}
+      style={{ width: "100%", height: "82%" }}
+      contentFit="contain"
+      nativeControls
+    />
+  );
+}
+
 const styles = StyleSheet.create({
+  iceRow: { paddingVertical: 8 },
+  iceChip: {
+    paddingHorizontal: 14,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  iceMore: { width: 36, paddingHorizontal: 0, alignItems: "center" },
+  iceTxt: { color: colors.text, fontSize: 13, fontWeight: "700" },
   root: { flex: 1 },
   header: {
     paddingTop: 54,
@@ -1356,7 +1865,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(232,0,10,0.2)",
+    backgroundColor: "rgba(255,46,77,0.2)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
@@ -1390,7 +1899,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "rgba(139,38,53,0.2)",
+    backgroundColor: "rgba(255,46,77,0.2)",
     borderWidth: 1,
     borderColor: "#4a2a2e",
   },
@@ -1427,7 +1936,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "rgba(232,0,10,0.2)",
+    backgroundColor: "rgba(255,46,77,0.2)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
@@ -1448,7 +1957,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   messages: { padding: 14, gap: 10 },
-  bubbleRow: { flexDirection: "row" },
+  bubbleRow: { flexDirection: "row", paddingHorizontal: 14, marginTop: 8 },
   mineRow: { justifyContent: "flex-end", paddingLeft: 50 },
   partnerRow: { justifyContent: "flex-start", paddingRight: 50 },
   bubble: {
@@ -1533,7 +2042,7 @@ const styles = StyleSheet.create({
   },
   reactionBubbleActive: {
     borderColor: colors.neonRed,
-    backgroundColor: "rgba(232,0,10,0.1)",
+    backgroundColor: "rgba(255,46,77,0.1)",
   },
   reactionEmoji: { fontSize: 14 },
   reactionCount: { color: "#888", fontSize: 11, fontWeight: "700" },
@@ -1627,8 +2136,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   composerBtnActive: {
-    backgroundColor: "rgba(232,0,10,0.15)",
-    borderColor: "rgba(232,0,10,0.4)",
+    backgroundColor: "rgba(255,46,77,0.15)",
+    borderColor: "rgba(255,46,77,0.4)",
   },
   composerBtnText: { fontSize: 20 },
   input: {
@@ -1716,7 +2225,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   sizeChipActive: {
-    backgroundColor: "rgba(232,0,10,0.25)",
+    backgroundColor: "rgba(255,46,77,0.25)",
     borderColor: colors.neonRed,
   },
   appearanceDone: {
@@ -1727,4 +2236,143 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   appearanceDoneTxt: { color: "#fff", fontWeight: "800" },
+  headerIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  sysRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 24,
+  },
+  sysTxt: { color: colors.gold, fontSize: 12, fontWeight: "700", textAlign: "center" },
+  welcome: { alignItems: "center", paddingTop: 70, paddingHorizontal: 36, gap: 8 },
+  welcomeIcon: { fontSize: 44 },
+  welcomeTitle: { color: colors.text, fontSize: 17, fontWeight: "900" },
+  welcomeTxt: { color: colors.muted, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  nextBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.neonRed,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  nextBtnTxt: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  leftBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "rgba(255,46,77,0.12)",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  leftTxt: { flex: 1, color: colors.text, fontSize: 13, fontWeight: "700" },
+  leftBtn: { backgroundColor: colors.neonRed, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7 },
+  leftBtnTxt: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  interestBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  interestTxt: { flex: 1, color: colors.gold, fontSize: 12, fontWeight: "700" },
+  nextOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(10,10,10,0.94)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+  },
+  nextTitle: { color: colors.text, fontSize: 17, fontWeight: "900" },
+  nextCancel: {
+    paddingHorizontal: 26,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  nextCancelTxt: { color: colors.text, fontWeight: "800" },
+  dayLabel: {
+    alignSelf: "center",
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginVertical: 14,
+  },
+  msgList: { paddingVertical: 10 },
+  msgRow: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 2 },
+  msgHead: { marginTop: 12 },
+  msgBar: { width: 3, borderRadius: 2, alignSelf: "stretch" },
+  msgBody: { flex: 1, gap: 2 },
+  msgLabelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 1 },
+  msgLabel: { fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
+  msgTime: { color: colors.mutedDark, fontSize: 10, fontWeight: "600" },
+  msgText: { color: colors.text, fontSize: 16, lineHeight: 22 },
+  msgImage: { width: 220, height: 220, borderRadius: 12 },
+  playOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 220,
+    height: 220,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.25)",
+  },
+  composerBar: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    backgroundColor: colors.black,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  roundBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    minHeight: 40,
+    maxHeight: 120,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pillInput: { flex: 1, color: colors.text, maxHeight: 100, paddingTop: 0, paddingBottom: 0 },
+  sendBtn2: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.neonRed,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

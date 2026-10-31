@@ -1,3 +1,4 @@
+/*VIMOX-V17*/
 import { useState } from "react";
 import {
   Alert,
@@ -15,6 +16,8 @@ import { colors } from "../theme/colors";
 import { useAuth } from "../services/AuthContext";
 import { RootStackParamList } from "../models/types";
 import { NeonButton } from "../components/NeonButton";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { profileLink as buildProfileLink } from "../utils/deepLink";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ShareProfile">;
 
@@ -24,8 +27,9 @@ export function ShareProfileScreen({ navigation }: Props) {
 
   if (!profile) return null;
 
-  const profileLink = `https://vimox.app/profile/${profile.id}`;
-  const shareText = `Rejoins-moi sur VimoX ! 🔥\n${profileLink}`;
+  // Lien que l'app sait ouvrir (vimox://). Il fonctionne chez les personnes qui ont VimoX installé.
+  const profileLink = buildProfileLink(profile.id);
+  const shareText = `Ajoute-moi sur VimoX ! 🔥\nOuvre ce lien avec l'application VimoX installée :\n${profileLink}`;
 
   async function handleShare() {
     try {
@@ -47,14 +51,11 @@ export function ShareProfileScreen({ navigation }: Props) {
 
   return (
     <View style={styles.root}>
+      <ScreenHeader
+        title="Partager mon profil"
+        onBack={() => navigation.goBack()}
+      />
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()}>
-            <Text style={styles.back}>‹</Text>
-          </Pressable>
-          <Text style={styles.title}>Partager mon profil</Text>
-          <View style={{ width: 28 }} />
-        </View>
 
         <View style={styles.qrContainer}>
           <View style={styles.qrCard}>
@@ -71,10 +72,10 @@ export function ShareProfileScreen({ navigation }: Props) {
             </View>
             <Text style={styles.qrName}>{profile.name}</Text>
             <Text style={styles.qrInfo}>
-              {profile.age} ans · {profile.country}
+              {profile.country}
             </Text>
             {profile.isPremium && (
-              <Text style={styles.qrPremium}>⭐ Premium</Text>
+              <Text style={styles.qrPremium}>✦ Vim+</Text>
             )}
           </View>
         </View>
@@ -106,7 +107,7 @@ export function ShareProfileScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
-  content: { padding: 20, paddingTop: 54, gap: 20 },
+  content: { padding: 20, paddingTop: 20, paddingBottom: 40, gap: 20 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -130,7 +131,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.05)",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.3)",
+    borderColor: "rgba(255,46,77,0.3)",
   },
   qrName: { color: colors.text, fontSize: 20, fontWeight: "900" },
   qrInfo: { color: colors.muted, fontSize: 14 },
@@ -152,20 +153,20 @@ const styles = StyleSheet.create({
   },
   linkText: { color: colors.text, fontSize: 13, fontWeight: "600" },
   copyBtn: {
-    backgroundColor: "rgba(232,0,10,0.1)",
-    borderRadius: 8,
-    padding: 10,
+    backgroundColor: colors.neonRedBg,
+    borderRadius: 10,
+    padding: 12,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.3)",
+    borderColor: colors.neonRed,
   },
-  copyText: { color: colors.neonRed, fontWeight: "700", fontSize: 13 },
+  copyText: { color: colors.neonRedText, fontWeight: "800", fontSize: 14 },
   infoCard: {
-    backgroundColor: "rgba(232,0,10,0.05)",
+    backgroundColor: "rgba(255,46,77,0.05)",
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.15)",
+    borderColor: "rgba(255,46,77,0.15)",
   },
   infoText: { color: colors.muted, fontSize: 13, lineHeight: 20 },
 });

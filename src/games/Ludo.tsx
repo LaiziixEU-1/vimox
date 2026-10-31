@@ -1,8 +1,11 @@
+/*VIMOX-V32*/
+/*VIMOX-V11*/
 import React,{useEffect,useRef,useState}from"react";
 import{View,Text,TouchableOpacity,StyleSheet,Animated,Dimensions,Vibration}from"react-native";
 import{useNavigation}from"@react-navigation/native";
 import{GameDoc,updateGame}from"./gameService";
 import{GameResultModal}from"./GameResultModal";
+import{haptic}from"./gameKit";
 
 const{width}=Dimensions.get("window");
 const BOARD=Math.min(width-8,360);
@@ -24,12 +27,11 @@ const PATH:[number,number][]=[
   [14,7],[14,6],[13,6],[12,6],[11,6],[10,6],[9,6],
   [8,5],[8,4],[8,3],[8,2],[8,1],[8,0],[7,0],[6,0],
 ];
-const PL=52;
+export const PL=52;
 const P2_OFF=13;
 const P1_STR:[number,number][]=[[7,1],[7,2],[7,3],[7,4],[7,5],[7,6],[7,7]];
 const P2_STR:[number,number][]=[[1,7],[2,7],[3,7],[4,7],[5,7],[6,7],[7,7]];
-const WIN_POS=PL+P1_STR.length-1;
-const SAFE_IDX=new Set([0,13,21,47]);
+export const WIN_POS=PL+P1_STR.length-1;
 
 // ✅ Étoiles corrigées selon tes instructions
 const SAFE_STARS=new Map<string,string>([
@@ -37,6 +39,16 @@ const SAFE_STARS=new Map<string,string>([
   ["8,3",ROUGE_S],  // Rouge — descendu d'une case
   ["6,11",JAUNE_S], // Jaune — monté d'une case
   ["11,8",VERT_S],  // Vert  — décalé à droite
+]);
+
+// Cases de départ des 4 couleurs (dessinées en couleur claire sur le plateau)
+const START_CELLS:[number,number][]=[[6,1],[1,8],[8,13],[13,6]];
+const pathIndexOf=(r:number,c:number)=>PATH.findIndex(([pr,pc])=>pr===r&&pc===c);
+// Cases protégées = départs + étoiles, CALCULÉES à partir du dessin : ce qui est dessiné
+// comme protégé l'est vraiment (avant, la règle protégeait d'autres cases que celles du plateau).
+export const SAFE_IDX=new Set<number>([
+  ...START_CELLS.map(([r,c])=>pathIndexOf(r,c)),
+  ...[...SAFE_STARS.keys()].map(k=>{const[r,c]=k.split(",").map(Number);return pathIndexOf(r,c);}),
 ]);
 
 const P_INSET=Math.round(C*0.42);
@@ -92,12 +104,36 @@ function coord(pos:number,isP1:boolean,ti:number):{x:number;y:number}{
   const[r,c]=PATH[idx];
   return{x:Math.round(c*C+C/2),y:Math.round(r*C+C/2)};
 }
-function pIdx(pos:number,isP1:boolean):number{
+export function pIdx(pos:number,isP1:boolean):number{
   if(pos<0||pos>=PL)return -1;
   return isP1?pos%PL:(pos+P2_OFF)%PL;
 }
 
 const FACES=["⚀","⚁","⚂","⚃","⚄","⚅"];
+// Un vrai dé : face blanche, points noirs
+const PIPS:Record<number,[number,number][]>={
+  1:[[1,1]],
+  2:[[0,0],[2,2]],
+  3:[[0,0],[1,1],[2,2]],
+  4:[[0,0],[0,2],[2,0],[2,2]],
+  5:[[0,0],[0,2],[1,1],[2,0],[2,2]],
+  6:[[0,0],[0,2],[1,0],[1,2],[2,0],[2,2]],
+};
+function DiceFace({value,size}:{value:number;size:number}){
+  const pip=Math.round(size*0.17);
+  const step=(size-pip)/2-Math.round(size*0.08);
+  const pad=Math.round(size*0.08);
+  return(
+    <View style={{width:size,height:size,borderRadius:Math.round(size*0.2),backgroundColor:"#FAFAF7",
+      borderWidth:2,borderColor:"#DDD8CC",shadowColor:"#000",shadowOpacity:0.4,shadowRadius:6,elevation:6}}>
+      {(PIPS[value]||PIPS[6]).map(([r,c],i)=>(
+        <View key={i} style={{position:"absolute",width:pip,height:pip,borderRadius:pip/2,backgroundColor:"#151515",
+          left:pad+c*step,top:pad+r*step}}/>
+      ))}
+    </View>
+  );
+}
+
 interface Props{game:GameDoc;chatId:string;myId:string;}
 
 const Tok=({color,sz,gold=false}:{color:string;sz:number;gold?:boolean})=>(
@@ -196,7 +232,7 @@ export function Ludo({game,chatId,myId}:Props){
 
   async function roll(){
     if(!isMyTurn||rolled||finished||rolling)return;
-    setRolling(true);Vibration.vibrate(20);
+    setRolling(true);haptic("tap");
     Animated.sequence([
       Animated.timing(dScale,{toValue:1.6,duration:100,useNativeDriver:true}),
       Animated.spring(dScale,{toValue:1,useNativeDriver:true,speed:20,bounciness:16}),
@@ -208,6 +244,17 @@ export function Ludo({game,chatId,myId}:Props){
     await new Promise(r=>setTimeout(r,520));
     const d=Math.floor(Math.random()*6)+1;
     setRolling(false);
+    const next=game.currentTurn===game.player1?game.player2:game.player1;
+    const sixes=(board.sixes||0)+(d===6?1:0);
+    // Règle officielle : trois 6 de suite, le tour s'arrête
+    if(d===6&&sixes>=3){
+      showBanner("🎲 Trois 6 : tour perdu");
+      haptic("error");
+      try{
+        await updateGame(chatId,game.id,{board:{...board,dice:d,diceRolled:false,sixes:0},currentTurn:next});
+      }catch(e){console.error("roll:",e);}
+      return;
+    }
     const tokens:number[]=game.board[myTK]||[-1,-1,-1,-1];
     const canMove=tokens.some(p=>{
       if(p===WIN_POS)return false;
@@ -216,13 +263,14 @@ export function Ludo({game,chatId,myId}:Props){
     });
     try{
       await updateGame(chatId,game.id,{
-        board:{...board,dice:d,diceRolled:true},currentTurn:myId,
+        board:{...board,dice:d,diceRolled:true,sixes},currentTurn:myId,
       });
       if(!canMove){
         await new Promise(r=>setTimeout(r,800));
-        const next=game.currentTurn===game.player1?game.player2:game.player1;
+        // Aucun pion ne peut bouger : avec un 6 on relance, sinon le tour passe
         await updateGame(chatId,game.id,{
-          board:{...board,dice:d,diceRolled:false},currentTurn:next,
+          board:{...board,dice:d,diceRolled:false,sixes:d===6?sixes:0},
+          currentTurn:d===6?myId:next,
         });
       }
     }catch(e){console.error("roll:",e);setRolling(false);}
@@ -242,26 +290,30 @@ export function Ludo({game,chatId,myId}:Props){
       ]),
       Animated.timing(tAnims[ti].s,{toValue:1,duration:100,useNativeDriver:false}),
     ]).start();
-    Vibration.vibrate(15);
+    haptic("tap");
     const newEn=[...enT];
+    let captured=false;
     if(newPos<PL){
       const mi=pIdx(newPos,isP1);
       enT.forEach((ep,ei)=>{
         if(ep<0||ep>=PL)return;
         if(pIdx(ep,!isP1)===mi&&!SAFE_IDX.has(mi)){
-          newEn[ei]=-1;showBanner("💥 Éliminé !");Vibration.vibrate([0,60,60,60]);
+          newEn[ei]=-1;captured=true;
         }
       });
     }
     const newMy=[...myT];newMy[ti]=newPos;
     const won=newMy.every(p=>p===WIN_POS);
-    const extra=dice===6&&!won;
+    const arrived=newPos===WIN_POS;
+    // Règles officielles : on rejoue après un 6, après une capture, ou quand un pion arrive à la maison
+    const extra=!won&&(dice===6||captured||arrived);
     const next=extra?myId:(game.currentTurn===game.player1?game.player2:game.player1);
-    if(dice===6&&!won)showBanner("🎲 Rejoue !");
-    else if(newPos===WIN_POS)showBanner("🎯 Arrivé !");
+    if(captured){showBanner("💥 Éliminé ! Rejoue");haptic("success");}
+    else if(arrived&&!won)showBanner("🎯 Arrivé ! Rejoue");
+    else if(dice===6&&!won)showBanner("🎲 Rejoue !");
     try{
       await updateGame(chatId,game.id,{
-        board:{...board,[myTK]:newMy,[enTK]:newEn,dice:0,diceRolled:false},
+        board:{...board,[myTK]:newMy,[enTK]:newEn,dice:0,diceRolled:false,sixes:extra&&dice===6?(board.sixes||0):0},
         currentTurn:next,status:won?"finished":"playing",winner:won?myId:null,
       });
     }catch(e){console.error("move:",e);}
@@ -441,10 +493,9 @@ export function Ludo({game,chatId,myId}:Props){
           onPress={roll}
           disabled={!isMyTurn||rolled||finished||rolling}
           activeOpacity={0.8}>
-          <Animated.Text style={[s.dFace,{transform:[{rotate:dRotDeg},{scale:dScale}]}]}>
-            {rolling?"🎲":dice>0?FACES[dice-1]:"🎲"}
-          </Animated.Text>
-          {dice>0&&!rolling&&<Text style={s.dNum}>{dice}</Text>}
+          <Animated.View style={{transform:[{rotate:dRotDeg},{scale:dScale}]}}>
+            <DiceFace value={rolling?((Math.floor(Date.now()/90)%6)+1):dice>0?dice:6} size={56}/>
+          </Animated.View>
         </TouchableOpacity>
         <View style={[s.sBox,{borderColor:!isMyTurn&&!finished?enColor+"88":"#1e1e1e"}]}>
           <View style={[s.sDot,{backgroundColor:enColor}]}/>
@@ -466,7 +517,7 @@ export function Ludo({game,chatId,myId}:Props){
 }
 
 const s=StyleSheet.create({
-  root:{alignItems:"center",backgroundColor:"#111",flex:1,paddingVertical:8,gap:8},
+  root:{alignItems:"center",backgroundColor:"transparent",flex:1,paddingVertical:8,gap:8},
   statusBar:{paddingHorizontal:20,paddingVertical:8,borderRadius:22,borderWidth:2},
   statusTxt:{fontSize:13,fontWeight:"800",textAlign:"center"},
   boardOuter:{borderRadius:6,borderWidth:4,borderColor:"#111",

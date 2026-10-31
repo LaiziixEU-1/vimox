@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme/colors";
+import { LinearGradient } from "expo-linear-gradient";
+import { colors, gradients } from "../theme/colors";
 
 interface Props {
   title: string;
@@ -52,6 +53,14 @@ export function NeonButton({
           { transform: [{ scale }] },
         ]}
       >
+        {variant === "primary" && (
+          <LinearGradient
+            colors={gradients.brand as unknown as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
         <View style={s.shine} />
         <Text
           style={[
@@ -69,7 +78,7 @@ export function NeonButton({
 
 const s = StyleSheet.create({
   btn: {
-    borderRadius: 14,
+    borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 24,
     alignItems: "center",
@@ -79,9 +88,10 @@ const s = StyleSheet.create({
   primary: {
     backgroundColor: colors.neonRed,
     shadowColor: colors.neonRed,
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
   secondary: {
     backgroundColor: "transparent",
@@ -89,9 +99,9 @@ const s = StyleSheet.create({
     borderColor: colors.neonRed,
   },
   danger: {
-    backgroundColor: "rgba(232,0,10,0.08)",
+    backgroundColor: "rgba(255,46,77,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(232,0,10,0.3)",
+    borderColor: "rgba(255,46,77,0.3)",
   },
   disabled: { opacity: 0.5 },
   shine: {
@@ -103,7 +113,7 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.08)",
   },
   txt: {
-    color: colors.text,
+    color: "#fff",
     fontSize: 14,
     fontWeight: "900",
     letterSpacing: 1,

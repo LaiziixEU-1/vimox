@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
+import { logDenied } from "./firestoreErrors";
 
 export async function uploadDocument(
   uri: string,
@@ -44,7 +45,7 @@ export async function sendDocumentMessage(
     documentName: name,
     senderId,
     createdAt: serverTimestamp(),
-    sentAt: Date.now(),
+    sentAt: serverTimestamp(),
     readBy: [senderId],
   });
 }
@@ -61,7 +62,7 @@ export async function sendLocationMessage(
     longitude,
     senderId,
     createdAt: serverTimestamp(),
-    sentAt: Date.now(),
+    sentAt: serverTimestamp(),
     readBy: [senderId],
   });
 }
@@ -78,7 +79,7 @@ export async function sendContactMessage(
     phone,
     senderId,
     createdAt: serverTimestamp(),
-    sentAt: Date.now(),
+    sentAt: serverTimestamp(),
     readBy: [senderId],
   });
 }
@@ -99,7 +100,7 @@ export async function sendReplyTextMessage(
     replyToText,
     replyToSenderId,
     createdAt: serverTimestamp(),
-    sentAt: Date.now(),
+    sentAt: serverTimestamp(),
     readBy: [senderId],
   });
 }
@@ -142,6 +143,6 @@ export function subscribeActivity(
         return;
       }
       onUpdate(snap.data()?.activity ?? null);
-    },
+    }, (e) => logDenied("activité du chat aléatoire", e),
   );
 }

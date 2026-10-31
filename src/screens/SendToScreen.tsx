@@ -1,29 +1,43 @@
+/*VIMOX-V30*/
 import { useEffect, useState } from "react";
 import {
   Alert,
   FlatList,
   Image,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { colors } from "../theme/colors";
+import { ScreenHeader } from "../components/ScreenHeader";
 import { Friend, RootStackParamList } from "../models/types";
 import { useAuth } from "../services/AuthContext";
 import { subscribeFriends } from "../services/friendService";
 import { sendSnapToFriend } from "../services/snapService";
+import { useChatPrefs } from "../hooks/useChatPrefs";
+import { Shortcut, activeMembers } from "../services/chatPrefsService";
+import { Group, sendGroupSnap, subscribeMyGroups } from "../services/groupService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SendTo">;
 
 export function SendToScreen({ route, navigation }: Props) {
-  const { imageURL } = route.params;
+  const { imageURL, duration } = route.params;
   const { profile } = useAuth();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  // Groupes : un Vim peut aussi partir dans un ou plusieurs groupes
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  useEffect(() => {
+    if (!profile) return;
+    return subscribeMyGroups(profile.id, setGroups);
+  }, [profile?.id]);
+  const total = selected.length + selectedGroups.length;
+  const prefs = useChatPrefs(profile?.id);
 
   useEffect(() => {
     if (!profile) return;
@@ -36,33 +50,104 @@ export function SendToScreen({ route, navigation }: Props) {
     );
   }
 
+  // Un raccourci sélectionne (ou désélectionne) d'un coup tous ses amis encore dans ta liste
+  function applyShortcut(sc: Shortcut) {
+    const ids = activeMembers(sc, friends.map((f) => f.id));
+    if (ids.length === 0) {
+      Alert.alert("Raccourci vide", "Ces amis ne sont plus dans ta liste.");
+      return;
+    }
+    const all = ids.every((id) => selected.includes(id));
+    setSelected((prev) => (all ? prev.filter((id) => !ids.includes(id)) : [...new Set([...prev, ...ids])]));
+  }
+
   async function handleSend() {
-    if (!profile || selected.length === 0) return;
+    if (!profile || total === 0) return;
     setSending(true);
     try {
-      await Promise.all(
-        selected.map((friendId) =>
-          sendSnapToFriend(profile.id, friendId, imageURL),
-        ),
-      );
+      await Promise.all([
+        ...selected.map((friendId) => sendSnapToFriend(profile.id, friendId, imageURL, duration)),
+        ...groups
+          .filter((g) => selectedGroups.includes(g.id))
+          .map((g) => sendGroupSnap(g, { id: profile.id, name: profile.name }, imageURL, duration)),
+      ]);
       navigation.popToTop();
     } catch {
-      Alert.alert("Erreur", "Impossible d'envoyer le Snap.");
+      Alert.alert("Erreur", "Impossible d'envoyer le Vim.");
     } finally {
       setSending(false);
     }
   }
 
+  const groupsSection =
+    groups.length > 0 ? (
+      <View style={s.shortcuts}>
+        <Text style={s.shortcutsTitle}>GROUPES</Text>
+        <View style={s.shortcutsRow}>
+          {groups.map((g) => {
+            const on = selectedGroups.includes(g.id);
+            return (
+              <Pressable
+                key={g.id}
+                onPress={() =>
+                  setSelectedGroups((p) => (p.includes(g.id) ? p.filter((x) => x !== g.id) : [...p, g.id]))
+                }
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`Groupe ${g.name}`}
+                style={[s.shortcut, on && s.shortcutOn]}
+              >
+                <Text style={{ fontSize: 16 }}>{g.emoji}</Text>
+                <Text style={[s.shortcutTxt, on && { color: "#fff" }]} numberOfLines={1}>
+                  {g.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    ) : null;
+
   return (
     <SafeAreaView style={s.root}>
-      <View style={s.header}>
-        <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
-          <Text style={s.back}>‹</Text>
-        </Pressable>
-        <Text style={s.title}>Envoyer à</Text>
-      </View>
+      <ScreenHeader
+        safeArea={false}
+        title="Envoyer à"
+        onBack={() => navigation.goBack()}
+      />
 
       <FlatList
+        ListHeaderComponent={
+          <>
+          {groupsSection}
+          {prefs.shortcuts.length > 0 ? (
+            <View style={s.shortcuts}>
+              <Text style={s.shortcutsTitle}>RACCOURCIS</Text>
+              <View style={s.shortcutsRow}>
+                {prefs.shortcuts.map((sc) => {
+                  const ids = activeMembers(sc, friends.map((f) => f.id));
+                  const on = ids.length > 0 && ids.every((id) => selected.includes(id));
+                  return (
+                    <Pressable
+                      key={sc.id}
+                      onPress={() => applyShortcut(sc)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`Raccourci ${sc.name}, ${ids.length} amis`}
+                      style={[s.shortcut, on && s.shortcutOn]}
+                    >
+                      <Text style={{ fontSize: 16 }}>{sc.emoji}</Text>
+                      <Text style={[s.shortcutTxt, on && { color: "#fff" }]} numberOfLines={1}>
+                        {sc.name} · {ids.length}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+          </>
+        }
         data={friends}
         keyExtractor={(i) => i.id}
         contentContainerStyle={{ padding: 16, gap: 10 }}
@@ -99,7 +184,7 @@ export function SendToScreen({ route, navigation }: Props) {
         }}
       />
 
-      {selected.length > 0 && (
+      {total > 0 && (
         <View style={s.footer}>
           <Pressable
             style={[s.sendBtn, sending && { opacity: 0.6 }]}
@@ -107,7 +192,7 @@ export function SendToScreen({ route, navigation }: Props) {
             disabled={sending}
           >
             <Text style={s.sendTxt}>
-              {sending ? "Envoi..." : `Envoyer (${selected.length})`}
+              {sending ? "Envoi..." : `Envoyer (${total})`}
             </Text>
           </Pressable>
         </View>
@@ -117,6 +202,12 @@ export function SendToScreen({ route, navigation }: Props) {
 }
 
 const s = StyleSheet.create({
+  shortcuts: { marginBottom: 6 },
+  shortcutsTitle: { color: colors.muted, fontSize: 12, fontWeight: "800", letterSpacing: 1, marginBottom: 8 },
+  shortcutsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  shortcut: { flexDirection: "row", alignItems: "center", gap: 6, height: 38, paddingHorizontal: 12, borderRadius: 19, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, maxWidth: "100%" },
+  shortcutOn: { backgroundColor: colors.neonRed, borderColor: colors.neonRed },
+  shortcutTxt: { color: colors.text, fontSize: 13, fontWeight: "800", flexShrink: 1 },
   root: { flex: 1, backgroundColor: colors.black },
   header: {
     paddingTop: 20,
@@ -148,14 +239,14 @@ const s = StyleSheet.create({
   },
   rowSelected: {
     borderColor: colors.neonRed,
-    backgroundColor: "rgba(232,0,10,0.08)",
+    backgroundColor: "rgba(255,46,77,0.08)",
   },
   avatar: { width: 44, height: 44, borderRadius: 22 },
   avatarPh: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(232,0,10,0.15)",
+    backgroundColor: "rgba(255,46,77,0.15)",
     alignItems: "center",
     justifyContent: "center",
   },

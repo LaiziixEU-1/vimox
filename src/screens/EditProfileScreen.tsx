@@ -1,25 +1,36 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { colors } from "../theme/colors";
+import { ScreenHeader } from "../components/ScreenHeader";
 import { RootStackParamList } from "../models/types";
 import { useAuth } from "../services/AuthContext";
 import { db } from "../config/firebase";
-import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
+import { uploadProfilePhoto } from "../services/storageService";
+import { guardText } from "../services/moderationGuard";
+import {
+  HandleError,
+  checkHandleAvailable,
+  claimUsername,
+  handleProblemText,
+  normalizeHandle,
+  releaseUsername,
+  validateHandle,
+} from "../services/usernameService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditProfile">;
 const COUNTRIES = [
@@ -40,6 +51,90 @@ export function EditProfileScreen({ navigation }: Props) {
   const [country, setCountry] = useState(profile?.country ?? "France");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Pseudo : « idle » (inchangé), « checking », « ok » (libre), « mine », ou un message d'erreur
+  const [handle, setHandle] = useState(profile?.username ?? "");
+  const [handleState, setHandleState] = useState<{ kind: "idle" | "checking" | "ok" | "bad"; text?: string }>({ kind: "idle" });
+  const wantedHandle = normalizeHandle(handle);
+  const currentHandle = profile?.username ?? "";
+  const handleChanged = wantedHandle !== currentHandle;
+  // Vérifie le pseudo après une courte pause de frappe (format, puis disponibilité)
+  useEffect(() => {
+    if (!profile || !handleChanged || wantedHandle === "") {
+      setHandleState({ kind: "idle" });
+      return;
+    }
+    const v = validateHandle(wantedHandle);
+    if (!v.ok) {
+      setHandleState({ kind: "bad", text: handleProblemText(v.problem) });
+      return;
+    }
+    setHandleState({ kind: "checking" });
+    let alive = true;
+    const timer = setTimeout(async () => {
+      try {
+        const a = await checkHandleAvailable(v.handle, profile.id);
+        if (!alive) return;
+        setHandleState(a === "taken" ? { kind: "bad", text: handleProblemText("taken") } : { kind: "ok", text: "Disponible" });
+      } catch {
+        if (alive) setHandleState({ kind: "idle" });
+      }
+    }, 450);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [wantedHandle, profile?.id]);
+  // Des modifications non enregistrées existent-elles ?
+  const dirty =
+    name.trim() !== (profile?.name ?? "") ||
+    bio.trim() !== (profile?.bio ?? "") ||
+    country !== (profile?.country ?? "France") ||
+    handleChanged ||
+    !!photoUri;
+
+  function handleBack() {
+    if (!dirty || loading) {
+      navigation.goBack();
+      return;
+    }
+    Alert.alert(
+      "Abandonner les modifications ?",
+      "Ce que tu as modifié ne sera pas enregistré.",
+      [
+        { text: "Continuer à modifier", style: "cancel" },
+        {
+          text: "Abandonner",
+          style: "destructive",
+          onPress: () => navigation.goBack(),
+        },
+      ],
+    );
+  }
+
+  // Photo de profil : prendre une photo (caméra avant) ou choisir dans la galerie
+  function choosePhoto() {
+    Alert.alert("Photo de profil", undefined, [
+      { text: "📸 Prendre une photo", onPress: takePhoto },
+      { text: "🖼️ Choisir dans la galerie", onPress: pickPhoto },
+      { text: "Annuler", style: "cancel" },
+    ]);
+  }
+
+  async function takePhoto() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission refusée", "Autorise la caméra dans les réglages de ton téléphone.");
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"] as any,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+      cameraType: ImagePicker.CameraType.front,
+    });
+    if (!res.canceled && res.assets[0]) setPhotoUri(res.assets[0].uri);
+  }
 
   async function pickPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -48,7 +143,7 @@ export function EditProfileScreen({ navigation }: Props) {
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.85,
@@ -62,8 +157,39 @@ export function EditProfileScreen({ navigation }: Props) {
       Alert.alert("Erreur", "Le prénom est obligatoire.");
       return;
     }
+    const verdict = await guardText(`${name} ${bio}`, {
+      userId: profile.id,
+      where: "profile",
+    });
+    if (!verdict.ok) {
+      Alert.alert("Profil non enregistré", verdict.message);
+      return;
+    }
+    // Pseudo : contrôle du format avant tout enregistrement
+    if (handleChanged && wantedHandle !== "") {
+      const v = validateHandle(wantedHandle);
+      if (!v.ok) {
+        Alert.alert("Pseudo non valide", handleProblemText(v.problem));
+        return;
+      }
+    }
     setLoading(true);
     try {
+      if (handleChanged) {
+        try {
+          if (wantedHandle === "") await releaseUsername(profile.id, currentHandle);
+          else await claimUsername(profile.id, wantedHandle, currentHandle || null);
+        } catch (e: any) {
+          setLoading(false);
+          Alert.alert(
+            "Pseudo non enregistré",
+            e instanceof HandleError
+              ? `${handleProblemText(e.problem)} Rien n'a été modifié.`
+              : "Impossible d'enregistrer le pseudo. Vérifie ta connexion. Rien n'a été modifié.",
+          );
+          return;
+        }
+      }
       const updates: Record<string, any> = {
         name: name.trim(),
         bio: bio.trim(),
@@ -71,20 +197,17 @@ export function EditProfileScreen({ navigation }: Props) {
         updatedAt: serverTimestamp(),
       };
       if (photoUri) {
-        const formData = new FormData();
-        formData.append("file", {
-          uri: photoUri,
-          type: "image/jpeg",
-          name: "profile.jpg",
-        } as any);
-        formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-        formData.append("folder", "profiles");
-        const res = await fetch(
-          `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-          { method: "POST", body: formData },
-        );
-        const data = await res.json();
-        if (data.secure_url) updates.profilePhotoURL = data.secure_url;
+        try {
+          updates.profilePhotoURL = await uploadProfilePhoto(profile.id, photoUri);
+        } catch (e: any) {
+          // On ne prétend pas que tout a marché si la photo n'est pas partie
+          setLoading(false);
+          Alert.alert(
+            "Photo non envoyée",
+            `Ta photo n'a pas pu être envoyée (${e?.message ?? "erreur réseau"}). Rien n'a été modifié.`,
+          );
+          return;
+        }
       }
       await updateDoc(doc(db, "users", profile.id), updates);
       Alert.alert("✅ Profil mis à jour !", " ", [
@@ -108,15 +231,20 @@ export function EditProfileScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={s.root}>
-      <View style={s.header}>
-        <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
-          <Text style={s.back}>‹</Text>
-        </Pressable>
-        <Text style={s.title}>Modifier le profil</Text>
-        <Pressable onPress={handleSave} disabled={loading} style={s.saveBtn}>
-          <Text style={s.saveTxt}>{loading ? "..." : "Enregistrer"}</Text>
-        </Pressable>
-      </View>
+      <ScreenHeader
+        safeArea={false}
+        title="Modifier le profil"
+        onBack={handleBack}
+        right={
+          <Pressable
+            onPress={handleSave}
+            disabled={loading || !dirty}
+            style={[s.saveBtn, !dirty && { opacity: 0.45 }]}
+          >
+            <Text style={s.saveTxt}>{loading ? "..." : "Enregistrer"}</Text>
+          </Pressable>
+        }
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
@@ -126,7 +254,7 @@ export function EditProfileScreen({ navigation }: Props) {
           keyboardShouldPersistTaps="handled"
         >
           <View style={s.photoSection}>
-            <Pressable onPress={pickPhoto} style={s.avatarWrap}>
+            <Pressable onPress={choosePhoto} style={s.avatarWrap} accessibilityRole="button" accessibilityLabel="Changer la photo de profil">
               {currentPhoto ? (
                 <Image source={{ uri: currentPhoto }} style={s.avatar} />
               ) : (
@@ -144,10 +272,44 @@ export function EditProfileScreen({ navigation }: Props) {
             value={name}
             onChangeText={setName}
             placeholder="Ton prénom"
+            maxLength={20}
             placeholderTextColor={colors.muted}
             style={s.input}
           />
-          <Text style={s.label}>BIO</Text>
+          <Text style={s.label}>PSEUDO</Text>
+          <View style={s.handleRow}>
+            <Text style={s.handleAt}>@</Text>
+            <TextInput
+              value={handle}
+              onChangeText={(v) => setHandle(v.replace(/^@+/, "").toLowerCase())}
+              placeholder="choisis-un-pseudo"
+              placeholderTextColor={colors.muted}
+              maxLength={20}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="Pseudo"
+              style={s.handleInput}
+            />
+          </View>
+          <Text
+            style={[
+              s.handleHelp,
+              handleState.kind === "ok" && { color: "#28F7A1" },
+              handleState.kind === "bad" && { color: "#ff7a7a" },
+            ]}
+          >
+            {handleState.kind === "checking"
+              ? "Vérification…"
+              : handleState.kind === "ok"
+                ? "✓ Disponible"
+                : handleState.kind === "bad"
+                  ? handleState.text
+                  : "3 à 20 caractères : lettres minuscules, chiffres, « . » et « _ ». Les autres peuvent te trouver avec @pseudo si tu apparais dans la recherche."}
+          </Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+            <Text style={s.label}>BIO</Text>
+            <Text style={[s.label, { opacity: 0.7 }]}>{bio.length}/120</Text>
+          </View>
           <TextInput
             value={bio}
             onChangeText={setBio}
@@ -216,7 +378,7 @@ const s = StyleSheet.create({
   back: { color: colors.text, fontSize: 28, fontWeight: "300" },
   title: { flex: 1, color: colors.text, fontSize: 18, fontWeight: "900" },
   saveBtn: {
-    backgroundColor: "rgba(232,0,10,0.15)",
+    backgroundColor: "rgba(255,46,77,0.15)",
     borderWidth: 1,
     borderColor: colors.neonRed,
     borderRadius: 10,
@@ -226,6 +388,18 @@ const s = StyleSheet.create({
   saveTxt: { color: colors.neonRed, fontSize: 13, fontWeight: "700" },
   scroll: { padding: 20, paddingBottom: 40 },
   photoSection: { alignItems: "center", marginBottom: 24 },
+  handleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+  },
+  handleAt: { color: colors.gold, fontSize: 16, fontWeight: "800", marginRight: 4 },
+  handleInput: { flex: 1, color: colors.text, fontSize: 16, paddingVertical: 14 },
+  handleHelp: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 6, marginBottom: 6 },
   avatarWrap: { position: "relative" },
   avatar: {
     width: 100,
@@ -238,7 +412,7 @@ const s = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: "rgba(232,0,10,0.12)",
+    backgroundColor: "rgba(255,46,77,0.12)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 3,
@@ -287,7 +461,7 @@ const s = StyleSheet.create({
     borderColor: colors.border,
   },
   chipOn: {
-    backgroundColor: "rgba(232,0,10,0.15)",
+    backgroundColor: "rgba(255,46,77,0.15)",
     borderColor: colors.neonRed,
   },
   chipTxt: { color: colors.muted, fontSize: 13, fontWeight: "600" },

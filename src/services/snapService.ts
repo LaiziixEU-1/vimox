@@ -1,15 +1,22 @@
+/*VIMOX-V30*/
 import {
   addDoc,
   collection,
+  query,
+  where,
   doc,
   getDoc,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { notifyNewSnap } from "./notificationService";
 import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from "../config/env";
+import type { MusicMeta } from "../features/sounds/soundService";
+import { logDenied } from "./firestoreErrors";
 
 function getChatId(a: string, b: string) {
   return [a, b].sort().join("_");
@@ -48,22 +55,80 @@ export async function uploadSnapImage(imageUri: string): Promise<string> {
   return data.secure_url as string;
 }
 
+// --- Snaps vidéo ---
+// Une vidéo est envoyée sur Cloudinary ; on obtient la vidéo en mp4 et sa première image (jpg).
+// Cette image sert d'« imageURL » : l'écran « Envoyer à » et l'ancien affichage continuent de marcher,
+// et la vidéo est retrouvée automatiquement à partir de cette image (même nom de fichier).
+export async function uploadSnapVideo(
+  videoUri: string,
+): Promise<{ videoURL: string; posterURL: string }> {
+  const isWebm = /\.webm($|\?)/i.test(videoUri);
+  const formData = new FormData();
+  formData.append("file", {
+    uri: videoUri,
+    type: isWebm ? "video/webm" : "video/mp4",
+    name: `snap_${Date.now()}.${isWebm ? "webm" : "mp4"}`,
+  } as any);
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  formData.append("folder", "snaps");
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`,
+    { method: "POST", body: formData },
+  );
+  const data = await res.json();
+  const url: string | undefined = data.secure_url;
+  if (!url) throw new Error(data?.error?.message ?? "Upload vidéo Cloudinary échoué.");
+  const base = url.replace(/\.[a-z0-9]+$/i, "");
+  return {
+    videoURL: `${base}.mp4`,
+    posterURL: `${base.replace("/video/upload/", "/video/upload/so_0/")}.jpg`,
+  };
+}
+
+// Retrouve la vidéo à partir de sa première image Cloudinary (ou null si c'est une photo)
+export function videoURLFromPoster(imageURL: string | null | undefined): string | null {
+  if (!imageURL || !imageURL.includes("/video/upload/so_0/")) return null;
+  return imageURL.replace("/video/upload/so_0/", "/video/upload/").replace(/\.jpg$/i, ".mp4");
+}
+
+// --- Son des Snaps ---
+// La caméra enregistre ici le son choisi pour une image ; l'écran « Envoyer à »
+// n'a rien à changer : sendSnapToFriend retrouve le son grâce à l'image.
+const snapMusic = new Map<string, { musicURL: string; meta: MusicMeta }>();
+export function registerSnapMusic(imageURL: string, musicURL: string, meta: MusicMeta) {
+  snapMusic.set(imageURL, { musicURL, meta });
+}
+
+// Son choisi dans la caméra pour cette image (sert aussi aux Vims de groupe)
+export function getSnapMusic(imageURL: string) {
+  return snapMusic.get(imageURL) ?? null;
+}
+
 export async function sendSnapToFriend(
   myUid: string,
   friendUid: string,
   imageURL: string,
+  duration = 6, // secondes d'affichage choisies par l'expéditeur
 ): Promise<void> {
   const cid = getChatId(myUid, friendUid);
+  const videoURL = videoURLFromPoster(imageURL);
+  const music = snapMusic.get(imageURL) ?? null;
   await addDoc(collection(db, "friendChats", cid, "messages"), {
     text: "",
     imageURL,
+    videoURL,
+    musicURL: music?.musicURL ?? null,
+    musicMeta: music?.meta ?? null,
     audioURL: null,
     isSnap: true,
     snapViewed: false,
+    duration,
     senderUid: myUid,
     sentAt: serverTimestamp(),
   });
   await recordSnapSent(cid, myUid, friendUid);
+  // L'ami est prévenu (ses réglages de notification sont respectés)
+  notifyNewSnap(friendUid, myUid).catch(() => {});
 }
 
 export async function markSnapViewed(
@@ -74,6 +139,9 @@ export async function markSnapViewed(
     await updateDoc(doc(db, "friendChats", chatId, "messages", messageId), {
       snapViewed: true,
       imageURL: null,
+      videoURL: null,
+      musicURL: null,
+      musicMeta: null,
     });
   } catch {}
 }
@@ -84,54 +152,58 @@ export async function recordSnapSent(
   friendUid: string,
 ): Promise<void> {
   const ref = doc(db, "streaks", chatId);
-  const snap = await getDoc(ref);
   const now = Date.now();
   const today = todayKey();
 
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      users: [myUid, friendUid],
+  // Transaction : si les deux amis envoient un Snap au même instant, aucun compteur n'est perdu
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists()) {
+      tx.set(ref, {
+        users: [myUid, friendUid],
+        [`lastSnapAt_${myUid}`]: now,
+        [`lastSnapAt_${friendUid}`]: null,
+        streakCount: 0,
+        lastIncrementDate: null,
+        totalSnaps: 1,
+        bestFriendSince: null,
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    }
+
+    const data = snap.data() as any;
+    const otherLastAt = data[`lastSnapAt_${friendUid}`] as number | null;
+    const otherLastDate = otherLastAt ? todayKey(new Date(otherLastAt)) : null;
+    const lastIncrementDate = data.lastIncrementDate as string | null;
+
+    let streakCount = data.streakCount ?? 0;
+    let newIncrementDate = lastIncrementDate;
+
+    if (otherLastDate === today && lastIncrementDate !== today) {
+      if (lastIncrementDate && daysBetween(lastIncrementDate, today) > 1) {
+        streakCount = 1;
+      } else {
+        streakCount = (streakCount || 0) + 1;
+      }
+      newIncrementDate = today;
+    }
+
+    const totalSnaps = (data.totalSnaps ?? 0) + 1;
+    let bestFriendSince = data.bestFriendSince ?? null;
+    if (!bestFriendSince && totalSnaps >= BEST_FRIEND_THRESHOLD) {
+      bestFriendSince = today;
+    }
+
+    tx.update(ref, {
       [`lastSnapAt_${myUid}`]: now,
-      [`lastSnapAt_${friendUid}`]: null,
-      streakCount: 0,
-      lastIncrementDate: null,
-      totalSnaps: 1,
-      bestFriendSince: null,
+      streakCount,
+      lastIncrementDate: newIncrementDate,
+      totalSnaps,
+      bestFriendSince,
       updatedAt: serverTimestamp(),
     });
-    return;
-  }
-
-  const data = snap.data() as any;
-  const otherLastAt = data[`lastSnapAt_${friendUid}`] as number | null;
-  const otherLastDate = otherLastAt ? todayKey(new Date(otherLastAt)) : null;
-  const lastIncrementDate = data.lastIncrementDate as string | null;
-
-  let streakCount = data.streakCount ?? 0;
-  let newIncrementDate = lastIncrementDate;
-
-  if (otherLastDate === today && lastIncrementDate !== today) {
-    if (lastIncrementDate && daysBetween(lastIncrementDate, today) > 1) {
-      streakCount = 1;
-    } else {
-      streakCount = (streakCount || 0) + 1;
-    }
-    newIncrementDate = today;
-  }
-
-  const totalSnaps = (data.totalSnaps ?? 0) + 1;
-  let bestFriendSince = data.bestFriendSince ?? null;
-  if (!bestFriendSince && totalSnaps >= BEST_FRIEND_THRESHOLD) {
-    bestFriendSince = today;
-  }
-
-  await updateDoc(ref, {
-    [`lastSnapAt_${myUid}`]: now,
-    streakCount,
-    lastIncrementDate: newIncrementDate,
-    totalSnaps,
-    bestFriendSince,
-    updatedAt: serverTimestamp(),
   });
 }
 
@@ -202,7 +274,53 @@ export function subscribeStreakInfo(
     }
 
     onUpdate({ streakCount, totalSnaps, isAboutToExpire, bestFriendBadge, canRestore });
-  });
+  }, (e) => logDenied("flamme", e));
+}
+
+// ⚡ Score VimoX (comme le Snap Score) : tous les Vims échangés avec tes amis + ta meilleure flamme
+export function subscribeMyScore(
+  uid: string,
+  cb: (r: { score: number; bestStreak: number }) => void,
+): () => void {
+  return onSnapshot(
+    query(collection(db, "streaks"), where("users", "array-contains", uid)),
+    (snap) => {
+      let score = 0;
+      let bestStreak = 0;
+      snap.docs.forEach((d) => {
+        const x: any = d.data();
+        score += Number(x.totalSnaps) || 0;
+        bestStreak = Math.max(bestStreak, Number(x.streakCount) || 0);
+      });
+      cb({ score, bestStreak });
+    },
+    () => cb({ score: 0, bestStreak: 0 }),
+  );
+}
+
+// Flammes qui vont s'éteindre ce soir : la dernière journée comptée est hier (pas encore de Vim aujourd'hui)
+export function subscribeStreaksAtRisk(
+  uid: string,
+  cb: (list: { otherUid: string; count: number }[]) => void,
+): () => void {
+  return onSnapshot(
+    query(collection(db, "streaks"), where("users", "array-contains", uid)),
+    (snap) => {
+      const today = todayKey();
+      const out: { otherUid: string; count: number }[] = [];
+      snap.docs.forEach((d) => {
+        const x: any = d.data();
+        const count = Number(x.streakCount) || 0;
+        const last = x.lastIncrementDate as string | null;
+        if (count > 0 && last && last !== today && daysBetween(last, today) === 1) {
+          const other = (x.users ?? []).find((u: string) => u !== uid);
+          if (other) out.push({ otherUid: other, count });
+        }
+      });
+      cb(out);
+    },
+    () => cb([]),
+  );
 }
 
 export function getStreakDisplay(
@@ -215,14 +333,18 @@ export function getStreakDisplay(
   return { icon: "🔥", show: true };
 }
 
-export function getBestFriendEmoji(badge: BestFriendBadge): string {
+// `custom` : emojis choisis par la personne (Paramètres > « Personnaliser les emojis »)
+export function getBestFriendEmoji(
+  badge: BestFriendBadge,
+  custom: Partial<Record<"friend" | "bestie" | "bestie_long", string>> = {},
+): string {
   switch (badge) {
     case "bestie_long":
-      return "❤️";
+      return custom.bestie_long ?? "❤️";
     case "bestie":
-      return "💛";
+      return custom.bestie ?? "💛";
     case "friend":
-      return "😊";
+      return custom.friend ?? "😊";
     default:
       return "";
   }
